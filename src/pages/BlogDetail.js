@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
@@ -18,17 +18,7 @@ const BlogDetail = () => {
   const [commentText, setCommentText] = useState('');
   const [recentBlogs, setRecentBlogs] = useState([]);
 
-  useEffect(() => {
-    fetchBlog();
-  }, [slug]);
-
-  useEffect(() => {
-    if (blog) {
-      fetchRecentBlogs();
-    }
-  }, [blog]);
-
-  const fetchBlog = async () => {
+  const fetchBlog = useCallback(async () => {
     try {
       const response = await api.get(`/blogs/${slug}`);
       setBlog(response.data);
@@ -43,7 +33,26 @@ const BlogDetail = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [slug, user, showNotification]);
+
+  const fetchRecentBlogs = useCallback(async () => {
+    try {
+      const response = await api.get('/blogs');
+      setRecentBlogs(response.data.filter(b => b._id !== blog?._id).slice(0, 5));
+    } catch (error) {
+      console.error('Error fetching recent blogs:', error);
+    }
+  }, [blog]);
+
+  useEffect(() => {
+    fetchBlog();
+  }, [slug, fetchBlog]);
+
+  useEffect(() => {
+    if (blog) {
+      fetchRecentBlogs();
+    }
+  }, [blog, fetchRecentBlogs]);
 
   const handleLike = async () => {
     if (!user) {
@@ -120,15 +129,6 @@ const BlogDetail = () => {
       </div>
     );
   }
-
-  const fetchRecentBlogs = async () => {
-    try {
-      const response = await api.get('/blogs');
-      setRecentBlogs(response.data.filter(b => b._id !== blog._id).slice(0, 5));
-    } catch (error) {
-      console.error('Error fetching recent blogs:', error);
-    }
-  };
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-8">

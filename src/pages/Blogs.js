@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../utils/api';
 
@@ -13,12 +13,7 @@ const Blogs = () => {
     search: '',
   });
 
-  useEffect(() => {
-    fetchBlogs();
-    fetchMeta();
-  }, [filters]);
-
-  const fetchBlogs = async () => {
+  const fetchBlogs = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -33,7 +28,7 @@ const Blogs = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters]);
 
   const fetchMeta = async () => {
     try {
@@ -47,6 +42,11 @@ const Blogs = () => {
       console.error('Error fetching meta:', error);
     }
   };
+
+  useEffect(() => {
+    fetchBlogs();
+    fetchMeta();
+  }, [filters, fetchBlogs]);
 
   if (loading) {
     return (

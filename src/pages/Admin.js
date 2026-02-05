@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../utils/api';
 import { useNotification } from '../components/Notification';
 import Modal from '../components/Modal';
@@ -14,19 +14,7 @@ const Admin = () => {
   const [loading, setLoading] = useState(false);
   const { showNotification } = useNotification();
 
-  useEffect(() => {
-    fetchData();
-    if (activeTab === 'matches' || activeTab === 'polls' || activeTab === 'stages') {
-      fetchCups();
-      if (activeTab === 'stages') {
-        fetchAllStages();
-      } else {
-        fetchStages();
-      }
-    }
-  }, [activeTab]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       if (activeTab === 'matches') {
@@ -50,7 +38,7 @@ const Admin = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeTab, showNotification]);
 
   const fetchCups = async () => {
     try {
@@ -61,7 +49,7 @@ const Admin = () => {
     }
   };
 
-  const fetchStages = async () => {
+  const fetchStages = useCallback(async () => {
     try {
       // Fetch stages for all cups
       const allStages = [];
@@ -73,16 +61,28 @@ const Admin = () => {
     } catch (error) {
       console.error('Error fetching stages:', error);
     }
-  };
+  }, [cups]);
 
-  const fetchAllStages = async () => {
+  const fetchAllStages = useCallback(async () => {
     try {
       const response = await api.get('/stages');
       setStages(response.data);
     } catch (error) {
       console.error('Error fetching all stages:', error);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+    if (activeTab === 'matches' || activeTab === 'polls' || activeTab === 'stages') {
+      fetchCups();
+      if (activeTab === 'stages') {
+        fetchAllStages();
+      } else {
+        fetchStages();
+      }
+    }
+  }, [activeTab, fetchData, fetchStages, fetchAllStages]);
 
   const handleCreateStage = async (stageData) => {
     try {
