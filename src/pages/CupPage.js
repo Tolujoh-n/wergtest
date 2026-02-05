@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../utils/api';
 
@@ -12,11 +12,7 @@ const CupPage = () => {
   const [awardPolls, setAwardPolls] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchCupData();
-  }, [cupSlug]);
-
-  const fetchCupData = async () => {
+  const fetchCupData = useCallback(async () => {
     try {
       const [cupRes, stagesRes, matchesRes, pollsRes] = await Promise.all([
         api.get(`/cups/slug/${cupSlug}`),
@@ -46,7 +42,11 @@ const CupPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [cupSlug]);
+
+  useEffect(() => {
+    fetchCupData();
+  }, [cupSlug, fetchCupData]);
 
   if (loading) {
     return (

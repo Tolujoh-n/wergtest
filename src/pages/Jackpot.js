@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
@@ -11,11 +11,7 @@ const Jackpot = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all'); // all, free, boost
 
-  useEffect(() => {
-    fetchJackpots();
-  }, [cupSlug, filter]);
-
-  const fetchJackpots = async () => {
+  const fetchJackpots = useCallback(async () => {
     setLoading(true);
     try {
       const endpoint = cupSlug 
@@ -29,7 +25,11 @@ const Jackpot = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [cupSlug, filter]);
+
+  useEffect(() => {
+    fetchJackpots();
+  }, [cupSlug, filter, fetchJackpots]);
 
   if (loading) {
     return (

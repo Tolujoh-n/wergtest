@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../utils/api';
 
 const Leaderboard = () => {
@@ -9,11 +9,7 @@ const Leaderboard = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all'); // all, free, boost, market
 
-  useEffect(() => {
-    fetchLeaderboard();
-  }, [cupSlug, filter]);
-
-  const fetchLeaderboard = async () => {
+  const fetchLeaderboard = useCallback(async () => {
     setLoading(true);
     try {
       const endpoint = cupSlug 
@@ -27,7 +23,11 @@ const Leaderboard = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [cupSlug, filter]);
+
+  useEffect(() => {
+    fetchLeaderboard();
+  }, [cupSlug, filter, fetchLeaderboard]);
 
   if (loading) {
     return (
