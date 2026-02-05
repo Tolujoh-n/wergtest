@@ -70,10 +70,6 @@ const TiptapEditor = ({ value, onChange, placeholder = 'Start writing...', showT
     editor?.chain().focus().toggleItalic().run();
   }, [editor]);
 
-  const toggleUnderline = useCallback(() => {
-    editor?.chain().focus().toggleUnderline().run();
-  }, [editor]);
-
   const setHeading = useCallback((level) => {
     editor?.chain().focus().toggleHeading({ level }).run();
   }, [editor]);

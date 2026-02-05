@@ -4,7 +4,6 @@ import api from '../utils/api';
 
 const Footer = () => {
   const [featuredBlogs, setFeaturedBlogs] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [socialLinks, setSocialLinks] = useState({
     socialTwitter: '',
     socialFacebook: '',
@@ -23,8 +22,6 @@ const Footer = () => {
       setFeaturedBlogs(response.data || []);
     } catch (error) {
       console.error('Error fetching featured blogs:', error);
-    } finally {
-      setLoading(false);
     }
   };
 

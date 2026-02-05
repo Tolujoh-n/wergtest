@@ -54,13 +54,6 @@ const NotificationToast = ({ notification, onRemove }) => {
     info: 'bg-blue-500',
   };
 
-  const iconColors = {
-    success: 'text-green-500',
-    error: 'text-red-500',
-    warning: 'text-yellow-500',
-    info: 'text-blue-500',
-  };
-
   return (
     <div
       className={`${bgColors[type] || bgColors.info} text-white px-6 py-4 rounded-lg shadow-lg flex items-center space-x-3 min-w-[300px] max-w-md animate-slide-in-right`}

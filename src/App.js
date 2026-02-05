@@ -3,7 +3,6 @@ import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from 'r
 import { AuthProvider } from './context/AuthContext';
 import { NotificationProvider } from './components/Notification';
 import Navbar from './components/Navbar';
-import Home from './pages/Home';
 import CupPage from './pages/CupPage';
 import MatchDetail from './pages/MatchDetail';
 import Admin from './pages/Admin';
