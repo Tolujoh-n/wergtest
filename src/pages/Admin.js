@@ -40,20 +40,20 @@ const Admin = () => {
     }
   }, [activeTab, showNotification]);
 
-  const fetchCups = async () => {
+  const fetchCups = useCallback(async () => {
     try {
       const response = await api.get('/cups');
       setCups(response.data);
     } catch (error) {
       console.error('Error fetching cups:', error);
     }
-  };
+  }, []);
 
-  const fetchStages = useCallback(async () => {
+  const fetchStages = useCallback(async (cupsData) => {
     try {
       // Fetch stages for all cups
       const allStages = [];
-      for (const cup of cups) {
+      for (const cup of cupsData) {
         const response = await api.get(`/cups/${cup.slug}/stages`);
         allStages.push(...response.data);
       }
@@ -61,7 +61,7 @@ const Admin = () => {
     } catch (error) {
       console.error('Error fetching stages:', error);
     }
-  }, [cups]);
+  }, []);
 
   const fetchAllStages = useCallback(async () => {
     try {
@@ -75,14 +75,24 @@ const Admin = () => {
   useEffect(() => {
     fetchData();
     if (activeTab === 'matches' || activeTab === 'polls' || activeTab === 'stages') {
-      fetchCups();
       if (activeTab === 'stages') {
         fetchAllStages();
+        fetchCups();
       } else {
-        fetchStages();
+        // For matches and polls, fetch cups first, then stages after cups are loaded
+        fetchCups().then(() => {
+          // This will be handled by the cups effect
+        });
       }
     }
-  }, [activeTab, fetchData, fetchStages, fetchAllStages]);
+  }, [activeTab, fetchData, fetchAllStages, fetchCups]);
+
+  // Separate effect to fetch stages when cups change (for matches/polls tabs)
+  useEffect(() => {
+    if ((activeTab === 'matches' || activeTab === 'polls') && cups.length > 0) {
+      fetchStages(cups);
+    }
+  }, [cups, activeTab, fetchStages]);
 
   const handleCreateStage = async (stageData) => {
     try {
