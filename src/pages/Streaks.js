@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
@@ -12,14 +12,7 @@ const Streaks = () => {
   const [streakHistory, setStreakHistory] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchStreaks();
-    if (user) {
-      fetchUserStreak();
-    }
-  }, [cupSlug, user]);
-
-  const fetchStreaks = async () => {
+  const fetchStreaks = useCallback(async () => {
     setLoading(true);
     try {
       const endpoint = cupSlug 
@@ -33,9 +26,9 @@ const Streaks = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [cupSlug]);
 
-  const fetchUserStreak = async () => {
+  const fetchUserStreak = useCallback(async () => {
     try {
       const response = await api.get('/api/streaks/user');
       setUserStreak(response.data);
@@ -43,7 +36,14 @@ const Streaks = () => {
     } catch (error) {
       console.error('Error fetching user streak:', error);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchStreaks();
+    if (user) {
+      fetchUserStreak();
+    }
+  }, [cupSlug, user, fetchStreaks, fetchUserStreak]);
 
   if (loading) {
     return (

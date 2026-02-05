@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
@@ -11,7 +11,6 @@ const MatchDetail = () => {
   const [poll, setPoll] = useState(null);
   const [loading, setLoading] = useState(true);
   const [prediction, setPrediction] = useState(null);
-  const [claimableAmount, setClaimableAmount] = useState(0);
   const { user } = useAuth();
   const navigate = useNavigate();
   const { showNotification } = useNotification();
@@ -19,14 +18,7 @@ const MatchDetail = () => {
   const isPoll = !!pollId;
   const itemId = pollId || matchId;
 
-  useEffect(() => {
-    fetchData();
-    if (user) {
-      fetchUserPrediction();
-    }
-  }, [itemId, user, isPoll]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       if (isPoll) {
         const response = await api.get(`/polls/${pollId}`);
@@ -40,9 +32,9 @@ const MatchDetail = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isPoll, pollId, matchId]);
 
-  const fetchUserPrediction = async () => {
+  const fetchUserPrediction = useCallback(async () => {
     try {
       // Fetch prediction by type to avoid mixing free and boost predictions
       const endpoint = isPoll 
@@ -54,7 +46,14 @@ const MatchDetail = () => {
       // User hasn't predicted yet for this type
       setPrediction(null);
     }
-  };
+  }, [isPoll, pollId, matchId, type]);
+
+  useEffect(() => {
+    fetchData();
+    if (user) {
+      fetchUserPrediction();
+    }
+  }, [itemId, user, isPoll, fetchData, fetchUserPrediction]);
 
   const handlePredict = async (outcome, amount = null) => {
     if (!user) {
@@ -632,7 +631,6 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification }) => 
   const [tradeType, setTradeType] = useState('buy');
   const [amount, setAmount] = useState('');
   const [trades, setTrades] = useState([]);
-  const [userShares, setUserShares] = useState(isPoll ? { yes: 0, no: 0 } : { teamA: 0, teamB: 0, draw: 0 });
   const [prediction, setPrediction] = useState(null);
   const [prices, setPrices] = useState({});
 
@@ -661,6 +659,34 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification }) => 
   const resolvedOutcome = item.result;
   const hasWon = prediction && prediction.status === 'won';
 
+  const fetchMarketData = useCallback(async () => {
+    try {
+      const response = await api.get(`/predictions/market/${item._id}/data?type=${isPoll ? 'poll' : 'match'}`);
+      setTrades(response.data.recentTrades || []);
+      
+      // Update prices from API
+      if (response.data.prices) {
+        setPrices(response.data.prices);
+      }
+    } catch (error) {
+      console.error('Error fetching market data:', error);
+    }
+  }, [item._id, isPoll]);
+
+  const fetchUserMarketPrediction = useCallback(async () => {
+    try {
+      const endpoint = isPoll 
+        ? `/predictions/poll/${item._id}/user?type=market`
+        : `/predictions/match/${item._id}/user?type=market`;
+      const response = await api.get(endpoint);
+      setPrediction(response.data);
+      
+      // Prediction data is stored in state, shares info is in prediction.shares
+    } catch (error) {
+      setPrediction(null);
+    }
+  }, [item._id, isPoll]);
+
   useEffect(() => {
     fetchMarketData();
     if (user) {
@@ -676,55 +702,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification }) => 
     }, 5000);
     
     return () => clearInterval(interval);
-  }, [item._id, user, isPoll]);
-
-  const fetchMarketData = async () => {
-    try {
-      const response = await api.get(`/predictions/market/${item._id}/data?type=${isPoll ? 'poll' : 'match'}`);
-      setTrades(response.data.recentTrades || []);
-      
-      // Update prices from API
-      if (response.data.prices) {
-        setPrices(response.data.prices);
-      }
-    } catch (error) {
-      console.error('Error fetching market data:', error);
-    }
-  };
-
-  const fetchUserMarketPrediction = async () => {
-    try {
-      const endpoint = isPoll 
-        ? `/predictions/poll/${item._id}/user?type=market`
-        : `/predictions/match/${item._id}/user?type=market`;
-      const response = await api.get(endpoint);
-      setPrediction(response.data);
-      
-      // Update user shares from prediction
-      if (response.data) {
-        if (isPoll) {
-          if (response.data.outcome === 'YES') {
-            setUserShares({ yes: response.data.shares || 0, no: 0 });
-          } else if (response.data.outcome === 'NO') {
-            setUserShares({ yes: 0, no: response.data.shares || 0 });
-          }
-        } else {
-          if (response.data.outcome === 'TeamA') {
-            setUserShares({ teamA: response.data.shares || 0, teamB: 0, draw: 0 });
-          } else if (response.data.outcome === 'TeamB') {
-            setUserShares({ teamA: 0, teamB: response.data.shares || 0, draw: 0 });
-          } else if (response.data.outcome === 'Draw') {
-            setUserShares({ teamA: 0, teamB: 0, draw: response.data.shares || 0 });
-          }
-        }
-      } else {
-        setUserShares(isPoll ? { yes: 0, no: 0 } : { teamA: 0, teamB: 0, draw: 0 });
-      }
-    } catch (error) {
-      setPrediction(null);
-      setUserShares(isPoll ? { yes: 0, no: 0 } : { teamA: 0, teamB: 0, draw: 0 });
-    }
-  };
+  }, [item._id, user, isPoll, fetchMarketData, fetchUserMarketPrediction]);
 
   const handleTrade = async () => {
     if (!user) {
