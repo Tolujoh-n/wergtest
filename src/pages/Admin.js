@@ -1,14 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../utils/api';
 import { useNotification } from '../components/Notification';
-import { useWallet } from '../context/WalletContext';
 import {
   createMarket,
   addLiquidity,
   resolveMarket,
   updateMarketStatus,
   setContractAddress,
-  setClaimableBalance,
   setClaimableBoost,
   setClaimableMarket,
   setJackpotBalance,
@@ -282,7 +280,7 @@ const Admin = () => {
         
         // Then resolve in backend only after blockchain success
         const resolveResponse = await api.post(`/admin/matches/${matchId}/resolve`, { result });
-        const { match: resolvedMatch, claimableBoostUpdates = [], claimableMarketUpdates = [], jackpotUpdates = [] } = resolveResponse.data || {};
+        const { claimableBoostUpdates = [], claimableMarketUpdates = [], jackpotUpdates = [] } = resolveResponse.data || {};
         
         // Set claimable boost, claimable market, and jackpot on blockchain so users can claim each separately
         const marketId = match.marketId;
@@ -421,7 +419,7 @@ const Admin = () => {
         // Then resolve in backend only after blockchain success
         const payload = optionIndex !== undefined ? { optionIndex } : { result };
         const resolveResponse = await api.post(`/admin/polls/${pollId}/resolve`, payload);
-        const { poll: resolvedPoll, claimableBoostUpdates = [], claimableMarketUpdates = [], jackpotUpdates = [] } = resolveResponse.data || {};
+        const { claimableBoostUpdates = [], claimableMarketUpdates = [], jackpotUpdates = [] } = resolveResponse.data || {};
         
         // Set claimable boost, claimable market, and jackpot on blockchain so users can claim each separately
         const marketId = poll.marketId;
@@ -3820,10 +3818,19 @@ const AddLiquidityModal = ({ match, onClose, onSubmit }) => {
           />
         </div>
         <div className="flex space-x-2">
-          <button type="submit" className="flex-1 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600">
-            Add Liquidity
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="flex-1 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSubmitting ? 'Submitting…' : 'Add Liquidity'}
           </button>
-          <button type="button" onClick={onClose} className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             Cancel
           </button>
         </div>

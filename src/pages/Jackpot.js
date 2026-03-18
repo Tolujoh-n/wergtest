@@ -33,7 +33,7 @@ const Jackpot = () => {
   });
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawing, setWithdrawing] = useState(false);
-  const { account, connect, isBaseSepolia } = useWallet();
+  const { account } = useWallet();
   
   // Set contract address on mount
   useEffect(() => {
@@ -52,7 +52,7 @@ const Jackpot = () => {
       const response = await api.get(endpoint);
       if (response.data.items) {
         setJackpots(response.data.items || []);
-        setPagination(response.data.pagination || pagination);
+        setPagination((prev) => response.data.pagination || prev);
       } else {
         setJackpots(response.data || []);
       }
@@ -131,7 +131,7 @@ const Jackpot = () => {
       showNotification(`Withdrawal sent to blockchain! TX: ${txHash.slice(0, 10)}...`, 'success');
       
       // Then update backend
-      const response = await api.post('/jackpots/withdraw', { amount: withdrawAmount });
+      await api.post('/jackpots/withdraw', { amount: withdrawAmount });
       showNotification('Withdrawal successful!', 'success');
       setWithdrawAmount('');
       await fetchUserStats();
@@ -234,7 +234,7 @@ const Jackpot = () => {
               key={f}
               onClick={() => {
                 setFilter(f);
-                setPagination({...pagination, currentPage: 1}); // Reset to page 1 when filter changes
+                setPagination((p) => ({ ...p, currentPage: 1 })); // Reset to page 1 when filter changes
               }}
               className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                 filter === f
@@ -348,7 +348,7 @@ const Jackpot = () => {
         {pagination.totalPages > 1 && (
           <div className="mt-6 flex items-center justify-between">
             <button
-              onClick={() => setPagination({...pagination, currentPage: pagination.currentPage - 1})}
+              onClick={() => setPagination((p) => ({ ...p, currentPage: p.currentPage - 1 }))}
               disabled={!pagination.hasPrev}
               className={`px-4 py-2 rounded-lg font-medium ${
                 pagination.hasPrev
@@ -362,7 +362,7 @@ const Jackpot = () => {
               Page {pagination.currentPage} of {pagination.totalPages} ({pagination.totalItems} total)
             </span>
             <button
-              onClick={() => setPagination({...pagination, currentPage: pagination.currentPage + 1})}
+              onClick={() => setPagination((p) => ({ ...p, currentPage: p.currentPage + 1 }))}
               disabled={!pagination.hasNext}
               className={`px-4 py-2 rounded-lg font-medium ${
                 pagination.hasNext

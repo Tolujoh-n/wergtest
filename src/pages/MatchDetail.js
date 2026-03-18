@@ -37,7 +37,7 @@ const MatchDetail = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { showNotification } = useNotification();
-  const { account, connect, isBaseSepolia } = useWallet();
+  const { account } = useWallet();
   
   // Set contract address on mount
   useEffect(() => {
@@ -107,17 +107,15 @@ const MatchDetail = () => {
   
   // Refresh prediction when item resolution status changes
   useEffect(() => {
-    if (user && (match || poll)) {
-      const item = match || poll;
-      if (item && item.isResolved) {
-        // Refresh prediction data when item is resolved
-        const timer = setTimeout(() => {
-          fetchUserPrediction();
-        }, 1000); // Small delay to ensure backend has saved the prediction
-        return () => clearTimeout(timer);
-      }
+    if (!user) return;
+    const item = match || poll;
+    if (item?.isResolved) {
+      const timer = setTimeout(() => {
+        fetchUserPrediction();
+      }, 1000);
+      return () => clearTimeout(timer);
     }
-  }, [match?.isResolved, poll?.isResolved, user, fetchUserPrediction]);
+  }, [match, poll, user, fetchUserPrediction]);
 
   const handlePredict = async (outcome, amount = null) => {
     if (!user) {
@@ -750,11 +748,11 @@ const BoostMatchView = ({ item, isPoll, prediction, onPredict, onStakeAction, on
   const [showStakeModal, setShowStakeModal] = useState(false);
   const [selectedOutcome, setSelectedOutcome] = useState(null);
   const [amount, setAmount] = useState('');
-  const [stakeAction, setStakeAction] = useState('add'); // 'add' or 'withdraw'
+  const [stakeAction] = useState('add'); // 'add' or 'withdraw' (setter intentionally unused)
   const [stakeAmount, setStakeAmount] = useState('');
   const [fees, setFees] = useState({ platformFee: 10, boostJackpotFee: 10 });
   const { showNotification } = useNotification();
-  const { account, connect, isBaseSepolia } = useWallet();
+  useWallet(); // keep provider initialized (account used elsewhere in component tree)
   
   // Fetch fees on mount
   useEffect(() => {
@@ -791,7 +789,7 @@ const BoostMatchView = ({ item, isPoll, prediction, onPredict, onStakeAction, on
     (prediction.status === 'settled' && (prediction.payout || 0) > 0) ||
     ((prediction.payout || 0) > 0 && prediction.status !== 'lost')
   );
-  const canModify = !locked && !isResolved && (item.status === 'upcoming' || item.status === 'active');
+  // const canModify = !locked && !isResolved && (item.status === 'upcoming' || item.status === 'active');
   
   const getOutcomeOptions = () => {
     if (isPoll) {
@@ -1287,7 +1285,7 @@ const BoostMatchView = ({ item, isPoll, prediction, onPredict, onStakeAction, on
 };
 
 const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locked = false, onItemUpdate }) => {
-  const { account, connect, isBaseSepolia } = useWallet();
+  const { account } = useWallet();
   const [selectedOption, setSelectedOption] = useState(null);
   const [tradeType, setTradeType] = useState('buy');
   const [amount, setAmount] = useState('');
@@ -1357,27 +1355,23 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
   };
   
   // Helper function to normalize outcome to price key (for price lookups)
-  const getPriceKey = (outcome) => {
+  const getPriceKey = useCallback((outcome) => {
     if (!outcome) return '';
-    const outcomeStr = outcome.trim().toLowerCase();
+    const outcomeStr = String(outcome).trim().toLowerCase();
     if (isPoll) {
-      // For polls, return as is (option text for option-based, yes/no for Yes/No)
       if (itemData.optionType === 'options' && itemData.options) {
-        // For option-based polls, return the exact option text
-        const option = itemData.options.find(opt => opt.text.toLowerCase() === outcomeStr || opt.text === outcome);
+        const option = itemData.options.find(
+          (opt) => opt && String(opt.text).toLowerCase() === outcomeStr
+        );
         return option ? option.text : outcome;
-      } else {
-        // For Yes/No polls, normalize to lowercase
-        return outcomeStr === 'yes' ? 'yes' : outcomeStr === 'no' ? 'no' : outcomeStr;
       }
-    } else {
-      // For matches, normalize to lowercase keys used in prices state
-      if (outcomeStr === 'teama' || outcomeStr === 'teama') return 'teamA';
-      if (outcomeStr === 'teamb' || outcomeStr === 'teamb') return 'teamB';
-      if (outcomeStr === 'draw') return 'draw';
-      return outcomeStr;
+      return outcomeStr === 'yes' ? 'yes' : outcomeStr === 'no' ? 'no' : outcomeStr;
     }
-  };
+    if (outcomeStr === 'teama') return 'teamA';
+    if (outcomeStr === 'teamb') return 'teamB';
+    if (outcomeStr === 'draw') return 'draw';
+    return outcomeStr;
+  }, [isPoll, itemData.optionType, itemData.options]);
   
   // Calculate winning predictions
   const winningPredictions = Object.values(predictions).filter(pred => 
@@ -1468,7 +1462,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     if (Math.abs(priceSum - 1.0) > 0.01) {
       console.warn('Prices do not sum to 1.0:', priceSum, calculatedPrices);
     }
-  }, [currentItem, item, isPoll, itemData.marketTeamALiquidity, itemData.marketTeamBLiquidity, itemData.marketDrawLiquidity, itemData.marketYesLiquidity, itemData.marketNoLiquidity, itemData.options]);
+  }, [currentItem, item, isPoll, itemData.optionType, itemData.marketTeamALiquidity, itemData.marketTeamBLiquidity, itemData.marketDrawLiquidity, itemData.marketYesLiquidity, itemData.marketNoLiquidity, itemData.options]);
 
   const fetchMarketData = useCallback(async () => {
     try {
@@ -2035,15 +2029,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     }
   };
 
-  const handleClaim = async () => {
-    try {
-      await api.post('/claims/claim/all');
-      showNotification('Claims processed successfully!', 'success');
-      fetchUserMarketPrediction();
-    } catch (error) {
-      showNotification(error.response?.data?.message || 'Failed to claim', 'error');
-    }
-  };
+  // Claiming is handled per-option via on-chain claim buttons elsewhere
 
   const handleBack = () => {
     if (item.cup && item.cup.slug) {
@@ -3122,38 +3108,6 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                   if (amount && amount !== 'max' && amount !== 'all') {
                     const sharesToSell = parseFloat(amount);
                     if (!isNaN(sharesToSell) && sharesToSell > 0 && availableShares > 0) {
-                      // Calculate ETH based on current option liquidity and shares
-                      let optionLiquidity = 0;
-                      let totalSharesForOption = 0;
-                      
-                      if (isPoll) {
-                        if (itemData.optionType === 'options' && itemData.options) {
-                          const selectedOpt = itemData.options.find(opt => opt.text === (optionPrediction?.outcome || selectedOption));
-                          if (selectedOpt) {
-                            optionLiquidity = selectedOpt.liquidity || 0;
-                            totalSharesForOption = selectedOpt.shares || 0;
-                          }
-                        } else {
-                          // Yes/No poll
-                          const normalized = (optionPrediction?.outcome || selectedOption).toUpperCase();
-                          optionLiquidity = normalized === 'YES' ? (itemData.marketYesLiquidity || 0) : (itemData.marketNoLiquidity || 0);
-                          totalSharesForOption = normalized === 'YES' ? (itemData.marketYesShares || 0) : (itemData.marketNoShares || 0);
-                        }
-                      } else {
-                        // Match
-                        const normalized = (optionPrediction?.outcome || selectedOption).toUpperCase();
-                        if (normalized === 'TEAMA') {
-                          optionLiquidity = itemData.marketTeamALiquidity || 0;
-                          totalSharesForOption = itemData.marketTeamAShares || 0;
-                        } else if (normalized === 'TEAMB') {
-                          optionLiquidity = itemData.marketTeamBLiquidity || 0;
-                          totalSharesForOption = itemData.marketTeamBShares || 0;
-                        } else if (normalized === 'DRAW') {
-                          optionLiquidity = itemData.marketDrawLiquidity || 0;
-                          totalSharesForOption = itemData.marketDrawShares || 0;
-                        }
-                      }
-                      
                       // Use current price: payout = shares * currentPrice
                       let currentPrice = 0;
                       if (isPoll) {

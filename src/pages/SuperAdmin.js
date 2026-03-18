@@ -330,6 +330,7 @@ const SuperAdmin = () => {
     } else if (activeTab === 'contract') {
       handleGetBalance(); // Load balances when contract tab is opened
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   return (

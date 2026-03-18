@@ -27,7 +27,7 @@ const Leaderboard = () => {
       if (response.data.users) {
         // New paginated response
         setLeaderboard(response.data.users || []);
-        setPagination(response.data.pagination || pagination);
+        setPagination((prev) => response.data.pagination || prev);
       } else {
         // Legacy response (no pagination)
         setLeaderboard(response.data || []);
@@ -71,7 +71,7 @@ const Leaderboard = () => {
               key={f}
               onClick={() => {
                 setFilter(f);
-                setPagination({...pagination, currentPage: 1}); // Reset to page 1 when filter changes
+                setPagination((p) => ({ ...p, currentPage: 1 })); // Reset to page 1 when filter changes
               }}
               className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                 filter === f
@@ -180,7 +180,7 @@ const Leaderboard = () => {
             <button
               onClick={() => {
                 const newPage = pagination.currentPage - 1;
-                setPagination({...pagination, currentPage: newPage});
+                setPagination((p) => ({ ...p, currentPage: newPage }));
               }}
               disabled={!pagination.hasPrev}
               className={`px-4 py-2 rounded-lg font-medium ${
@@ -197,7 +197,7 @@ const Leaderboard = () => {
             <button
               onClick={() => {
                 const newPage = pagination.currentPage + 1;
-                setPagination({...pagination, currentPage: newPage});
+                setPagination((p) => ({ ...p, currentPage: newPage }));
               }}
               disabled={!pagination.hasNext}
               className={`px-4 py-2 rounded-lg font-medium ${
