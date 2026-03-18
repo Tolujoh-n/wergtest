@@ -11,13 +11,15 @@ const Streaks = () => {
   const [userStreak, setUserStreak] = useState(null);
   const [streakHistory, setStreakHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 12;
 
   const fetchStreaks = useCallback(async () => {
     setLoading(true);
     try {
       const endpoint = cupSlug 
-        ? `/api/streaks/cup/${cupSlug}`
-        : '/api/streaks';
+        ? `/streaks/cup/${cupSlug}`
+        : '/streaks';
       const response = await api.get(endpoint);
       setTopStreaks(response.data || []);
     } catch (error) {
@@ -30,7 +32,7 @@ const Streaks = () => {
 
   const fetchUserStreak = useCallback(async () => {
     try {
-      const response = await api.get('/api/streaks/user');
+      const response = await api.get('/streaks/user');
       setUserStreak(response.data);
       setStreakHistory(response.data.history || []);
     } catch (error) {
@@ -86,40 +88,88 @@ const Streaks = () => {
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
             Top Streaks
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {topStreaks.slice(0, 10).map((streakUser, index) => (
-              <div
-                key={streakUser._id}
-                className={`bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 ${
-                  index < 3 ? 'border-2 border-orange-500' : ''
-                }`}
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center">
-                    <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold">
-                      {streakUser.username?.[0]?.toUpperCase() || 'U'}
-                    </div>
-                    <div className="ml-4">
-                      <div className="font-semibold text-gray-900 dark:text-white">
-                        {streakUser.username}
+          
+          {/* Pagination for streaks */}
+          {(() => {
+            const totalPages = Math.ceil(topStreaks.length / itemsPerPage);
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const paginatedStreaks = topStreaks.slice(startIndex, endIndex);
+            const globalIndex = startIndex; // For rank calculation
+            
+            return (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {paginatedStreaks.map((streakUser, index) => {
+                    const rank = globalIndex + index + 1;
+                    return (
+                      <div
+                        key={streakUser._id}
+                        className={`bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 ${
+                          rank <= 3 ? 'border-2 border-orange-500' : ''
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center">
+                            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold">
+                              {streakUser.username?.[0]?.toUpperCase() || 'U'}
+                            </div>
+                            <div className="ml-4">
+                              <div className="font-semibold text-gray-900 dark:text-white">
+                                {streakUser.username}
+                              </div>
+                              <div className="text-sm text-gray-500 dark:text-gray-400">
+                                Rank #{rank}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-4xl font-bold text-orange-500 mb-2">
+                            🔥 {streakUser.streak || 0}
+                          </div>
+                          <div className="text-sm text-gray-600 dark:text-gray-400">
+                            {streakUser.correctPredictions || 0} correct predictions
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-sm text-gray-500 dark:text-gray-400">
-                        Rank #{index + 1}
-                      </div>
-                    </div>
-                  </div>
+                    );
+                  })}
                 </div>
-                <div className="text-center">
-                  <div className="text-4xl font-bold text-orange-500 mb-2">
-                    🔥 {streakUser.streak || 0}
+                
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div className="mt-6 flex items-center justify-between">
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                      className={`px-4 py-2 rounded-lg font-medium ${
+                        currentPage === 1
+                          ? 'bg-gray-300 dark:bg-gray-700 text-gray-500 cursor-not-allowed'
+                          : 'bg-blue-500 text-white hover:bg-blue-600'
+                      }`}
+                    >
+                      Previous
+                    </button>
+                    <span className="text-gray-600 dark:text-gray-400">
+                      Page {currentPage} of {totalPages} ({topStreaks.length} total)
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                      className={`px-4 py-2 rounded-lg font-medium ${
+                        currentPage === totalPages
+                          ? 'bg-gray-300 dark:bg-gray-700 text-gray-500 cursor-not-allowed'
+                          : 'bg-blue-500 text-white hover:bg-blue-600'
+                      }`}
+                    >
+                      Next
+                    </button>
                   </div>
-                  <div className="text-sm text-gray-600 dark:text-gray-400">
-                    {streakUser.correctPredictions || 0} correct predictions
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         {/* Streak History */}

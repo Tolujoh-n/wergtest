@@ -68,6 +68,7 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
+              placeholder="Choose a username"
               className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
             />
           </div>
@@ -81,6 +82,7 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              placeholder="Enter your email"
               className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
             />
           </div>
@@ -94,6 +96,7 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              placeholder="Enter password (min 6 characters)"
               className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
             />
           </div>
@@ -107,6 +110,7 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
+              placeholder="Confirm your password"
               className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
             />
           </div>
@@ -130,7 +134,7 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
         </div>
 
         <div className="mt-4">
-          <WalletConnectButton onSuccess={onClose} />
+          <WalletConnectButton onSuccess={onClose} onConnectClick={onClose} />
         </div>
 
         <div className="mt-4 text-center">

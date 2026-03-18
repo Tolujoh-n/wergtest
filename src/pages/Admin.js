@@ -1,8 +1,23 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../utils/api';
 import { useNotification } from '../components/Notification';
+import { useWallet } from '../context/WalletContext';
+import {
+  createMarket,
+  addLiquidity,
+  resolveMarket,
+  updateMarketStatus,
+  setContractAddress,
+  setClaimableBalance,
+  setClaimableBoost,
+  setClaimableMarket,
+  setJackpotBalance,
+} from '../utils/blockchain';
 import Modal from '../components/Modal';
 import TiptapEditor from '../components/TiptapEditor';
+import ImageUpload from '../components/ImageUpload';
+
+const ITEMS_PER_PAGE = 20;
 
 const Admin = () => {
   const [activeTab, setActiveTab] = useState('matches');
@@ -12,7 +27,20 @@ const Admin = () => {
   const [polls, setPolls] = useState([]);
   const [blogs, setBlogs] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [tablePage, setTablePage] = useState(1);
   const { showNotification } = useNotification();
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [activeTab]);
+  
+  // Set contract address on mount
+  useEffect(() => {
+    const contractAddr = process.env.REACT_APP_CONTRACT_ADDRESS;
+    if (contractAddr) {
+      setContractAddress(contractAddr);
+    }
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -126,11 +154,41 @@ const Admin = () => {
 
   const handleCreateMatch = async (matchData) => {
     try {
-      await api.post('/admin/matches', matchData);
+      // Create market on blockchain first (auto-connects wallet and switches network if needed)
+      const options = ['TeamA', 'Draw', 'TeamB'];
+      const marketId = await createMarket(false, options);
+      const marketIdNum = parseInt(marketId, 10);
+      showNotification(`Market created on blockchain! Market ID: ${marketIdNum}`, 'success');
+      
+      // Wait a moment to ensure the market is fully created on blockchain
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Add initial liquidity if provided
+      if (matchData.marketTeamALiquidity > 0 || matchData.marketTeamBLiquidity > 0 || matchData.marketDrawLiquidity > 0) {
+        if (matchData.marketTeamALiquidity > 0) {
+          await addLiquidity(marketIdNum, 'TeamA', matchData.marketTeamALiquidity);
+        }
+        if (matchData.marketTeamBLiquidity > 0) {
+          await addLiquidity(marketIdNum, 'TeamB', matchData.marketTeamBLiquidity);
+        }
+        if (matchData.marketDrawLiquidity > 0) {
+          await addLiquidity(marketIdNum, 'Draw', matchData.marketDrawLiquidity);
+        }
+        showNotification('Initial liquidity added on blockchain!', 'success');
+      }
+      
+      // Create match in backend with marketId
+      await api.post('/admin/matches', {
+        ...matchData,
+        marketId: marketIdNum,
+        marketInitialized: true,
+      });
+      
       fetchData();
-      showNotification('Match created successfully!', 'success');
+      showNotification('Match created successfully on blockchain and backend!', 'success');
     } catch (error) {
-      showNotification(error.response?.data?.message || 'Failed to create match', 'error');
+      console.error('Error creating match:', error);
+      showNotification(error.message || 'Failed to create match', 'error');
     }
   };
 
@@ -156,41 +214,315 @@ const Admin = () => {
 
   const handleAddMatchLiquidity = async (matchId, liquidity) => {
     try {
-      await api.post(`/admin/matches/${matchId}/liquidity`, liquidity);
+      // Auto-connects wallet and switches network if needed
+      // Get match to get marketId
+      const matchResponse = await api.get(`/matches/${matchId}`);
+      const match = matchResponse.data;
+      
+      if (!match.marketId) {
+        showNotification('Market not created on blockchain yet', 'error');
+        return;
+      }
+      
+      // Add liquidity on blockchain first
+      try {
+        if (liquidity.teamALiquidity > 0) {
+          await addLiquidity(match.marketId, 'TeamA', liquidity.teamALiquidity);
+        }
+        if (liquidity.teamBLiquidity > 0) {
+          await addLiquidity(match.marketId, 'TeamB', liquidity.teamBLiquidity);
+        }
+        if (liquidity.drawLiquidity > 0) {
+          await addLiquidity(match.marketId, 'Draw', liquidity.drawLiquidity);
+        }
+        
+        showNotification('Liquidity added on blockchain!', 'success');
+        
+        // Update backend only after blockchain success
+        await api.post(`/admin/matches/${matchId}/liquidity`, liquidity);
+      } catch (blockchainError) {
+        console.error('Blockchain transaction failed:', blockchainError);
+        showNotification(blockchainError.message || 'Blockchain transaction failed. Please try again.', 'error');
+        throw blockchainError; // Re-throw to prevent backend call
+      }
       fetchData();
       showNotification('Liquidity added successfully!', 'success');
     } catch (error) {
-      showNotification(error.response?.data?.message || 'Failed to add liquidity', 'error');
+      console.error('Error adding liquidity:', error);
+      showNotification(error.message || 'Failed to add liquidity', 'error');
     }
   };
 
   const handleResolveMatch = async (matchId, result) => {
     try {
-      await api.post(`/admin/matches/${matchId}/resolve`, { result });
+      // Auto-connects wallet and switches network if needed
+      // Get match to get marketId
+      const matchResponse = await api.get(`/matches/${matchId}`);
+      const match = matchResponse.data;
+      
+      if (!match.marketId) {
+        showNotification('Market not created on blockchain yet', 'error');
+        return;
+      }
+      
+      // Map result to blockchain format
+      let winningOption = result;
+      if (result === 'TeamA' || result.toLowerCase() === 'teama') {
+        winningOption = 'TeamA';
+      } else if (result === 'TeamB' || result.toLowerCase() === 'teamb') {
+        winningOption = 'TeamB';
+      } else if (result === 'Draw' || result.toLowerCase() === 'draw') {
+        winningOption = 'Draw';
+      }
+      
+      // Resolve on blockchain first
+      try {
+        const txHash = await resolveMarket(match.marketId, winningOption);
+        showNotification(`Match resolved on blockchain! TX: ${txHash.slice(0, 10)}...`, 'success');
+        
+        // Then resolve in backend only after blockchain success
+        const resolveResponse = await api.post(`/admin/matches/${matchId}/resolve`, { result });
+        const { match: resolvedMatch, claimableBoostUpdates = [], claimableMarketUpdates = [], jackpotUpdates = [] } = resolveResponse.data || {};
+        
+        // Set claimable boost, claimable market, and jackpot on blockchain so users can claim each separately
+        const marketId = match.marketId;
+        const totalToSet = claimableBoostUpdates.length + claimableMarketUpdates.length + jackpotUpdates.length;
+        if (totalToSet > 0) {
+          showNotification(`Setting ${totalToSet} balance(s) on chain so participants can claim…`, 'info');
+        }
+        let setBoostCount = 0;
+        for (const { walletAddress, amount } of claimableBoostUpdates) {
+          try {
+            await setClaimableBoost(marketId, walletAddress, amount);
+            setBoostCount++;
+          } catch (e) {
+            console.error(`Error setting claimable boost for ${walletAddress}:`, e);
+          }
+        }
+        let setMarketCount = 0;
+        for (const { walletAddress, amount } of claimableMarketUpdates) {
+          try {
+            await setClaimableMarket(marketId, walletAddress, amount);
+            setMarketCount++;
+          } catch (e) {
+            console.error(`Error setting claimable market for ${walletAddress}:`, e);
+          }
+        }
+        let jackpotBalanceCount = 0;
+        for (const { walletAddress, amount } of jackpotUpdates) {
+          try {
+            await setJackpotBalance(walletAddress, amount);
+            jackpotBalanceCount++;
+          } catch (jackpotError) {
+            console.error(`Error setting jackpot balance for ${walletAddress}:`, jackpotError);
+          }
+        }
+        if (setBoostCount > 0 || setMarketCount > 0) {
+          showNotification(`Set ${setBoostCount} boost + ${setMarketCount} market claimable on blockchain`, 'success');
+        }
+        if (jackpotBalanceCount > 0) {
+          showNotification(`Set ${jackpotBalanceCount} jackpot balance(s) on blockchain`, 'success');
+        }
+      } catch (blockchainError) {
+        console.error('Blockchain transaction failed:', blockchainError);
+        showNotification(blockchainError.message || 'Blockchain transaction failed. Please try again.', 'error');
+        throw blockchainError; // Re-throw to prevent backend call
+      }
       fetchData();
       showNotification('Match resolved successfully!', 'success');
     } catch (error) {
-      showNotification(error.response?.data?.message || 'Failed to resolve match', 'error');
+      console.error('Error resolving match:', error);
+      showNotification(error.message || 'Failed to resolve match', 'error');
     }
   };
 
   const handleCreatePoll = async (pollData) => {
     try {
-      await api.post('/admin/polls', pollData);
+      // Auto-connects wallet and switches network if needed
+      // Create market on blockchain first
+      let options = [];
+      if (pollData.optionType === 'options' && pollData.options) {
+        // Option-based poll - trim so contract and frontend match exactly
+        options = pollData.options.map(opt => String(opt.text || '').trim()).filter(Boolean);
+      } else {
+        // Normal Yes/No poll
+        options = ['YES', 'NO'];
+      }
+      
+      const marketId = await createMarket(true, options);
+      const marketIdNum = parseInt(marketId, 10);
+      showNotification(`Market created on blockchain! Market ID: ${marketIdNum}`, 'success');
+      
+      // Wait a moment to ensure the market is fully created on blockchain
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Add initial liquidity if provided
+      if (pollData.optionType === 'options' && pollData.options) {
+        for (const opt of pollData.options) {
+          if (opt.liquidity > 0) {
+            await addLiquidity(marketIdNum, opt.text, opt.liquidity);
+          }
+        }
+      } else {
+        // Normal Yes/No poll
+        if (pollData.marketYesLiquidity > 0) {
+          await addLiquidity(marketIdNum, 'YES', pollData.marketYesLiquidity);
+        }
+        if (pollData.marketNoLiquidity > 0) {
+          await addLiquidity(marketIdNum, 'NO', pollData.marketNoLiquidity);
+        }
+      }
+      
+      if (pollData.marketYesLiquidity > 0 || pollData.marketNoLiquidity > 0 || 
+          (pollData.options && pollData.options.some(opt => opt.liquidity > 0))) {
+        showNotification('Initial liquidity added on blockchain!', 'success');
+      }
+      
+      // Create poll in backend with marketId
+      await api.post('/admin/polls', {
+        ...pollData,
+        marketId: marketIdNum,
+        marketInitialized: true,
+      });
+      
       fetchData();
-      showNotification('Poll created successfully!', 'success');
+      showNotification('Poll created successfully on blockchain and backend!', 'success');
     } catch (error) {
-      showNotification(error.response?.data?.message || 'Failed to create poll', 'error');
+      console.error('Error creating poll:', error);
+      showNotification(error.message || 'Failed to create poll', 'error');
     }
   };
 
-  const handleResolvePoll = async (pollId, result) => {
+  const handleResolvePoll = async (pollId, result, optionIndex) => {
     try {
-      await api.post(`/admin/polls/${pollId}/resolve`, { result });
+      // Auto-connects wallet and switches network if needed
+      // Get poll to get marketId
+      const pollResponse = await api.get(`/polls/${pollId}`);
+      const poll = pollResponse.data;
+      
+      if (!poll.marketId) {
+        showNotification('Market not created on blockchain yet', 'error');
+        return;
+      }
+      
+      // Determine winning option
+      let winningOption = result;
+      if (poll.optionType === 'options' && optionIndex !== undefined) {
+        winningOption = poll.options[optionIndex].text;
+      } else if (result) {
+        winningOption = result.toUpperCase();
+      }
+      
+      // Resolve on blockchain first
+      try {
+        const txHash = await resolveMarket(poll.marketId, winningOption);
+        showNotification(`Poll resolved on blockchain! TX: ${txHash.slice(0, 10)}...`, 'success');
+        
+        // Then resolve in backend only after blockchain success
+        const payload = optionIndex !== undefined ? { optionIndex } : { result };
+        const resolveResponse = await api.post(`/admin/polls/${pollId}/resolve`, payload);
+        const { poll: resolvedPoll, claimableBoostUpdates = [], claimableMarketUpdates = [], jackpotUpdates = [] } = resolveResponse.data || {};
+        
+        // Set claimable boost, claimable market, and jackpot on blockchain so users can claim each separately
+        const marketId = poll.marketId;
+        const totalToSet = claimableBoostUpdates.length + claimableMarketUpdates.length + jackpotUpdates.length;
+        if (totalToSet > 0) {
+          showNotification(`Setting ${totalToSet} balance(s) on chain so participants can claim…`, 'info');
+        }
+        let setBoostCount = 0;
+        for (const { walletAddress, amount } of claimableBoostUpdates) {
+          try {
+            await setClaimableBoost(marketId, walletAddress, amount);
+            setBoostCount++;
+          } catch (e) {
+            console.error(`Error setting claimable boost for ${walletAddress}:`, e);
+          }
+        }
+        let setMarketCount = 0;
+        for (const { walletAddress, amount } of claimableMarketUpdates) {
+          try {
+            await setClaimableMarket(marketId, walletAddress, amount);
+            setMarketCount++;
+          } catch (e) {
+            console.error(`Error setting claimable market for ${walletAddress}:`, e);
+          }
+        }
+        let jackpotBalanceCount = 0;
+        for (const { walletAddress, amount } of jackpotUpdates) {
+          try {
+            await setJackpotBalance(walletAddress, amount);
+            jackpotBalanceCount++;
+          } catch (jackpotError) {
+            console.error(`Error setting jackpot balance for ${walletAddress}:`, jackpotError);
+          }
+        }
+        
+        if (setBoostCount > 0 || setMarketCount > 0) {
+          showNotification(`Set ${setBoostCount} boost + ${setMarketCount} market claimable on blockchain`, 'success');
+        }
+        if (jackpotBalanceCount > 0) {
+          showNotification(`Set ${jackpotBalanceCount} jackpot balance(s) on blockchain`, 'success');
+        }
+      } catch (blockchainError) {
+        console.error('Blockchain transaction failed:', blockchainError);
+        showNotification(blockchainError.message || 'Blockchain transaction failed. Please try again.', 'error');
+        throw blockchainError; // Re-throw to prevent backend call
+      }
       fetchData();
       showNotification('Poll resolved successfully!', 'success');
     } catch (error) {
-      showNotification(error.response?.data?.message || 'Failed to resolve poll', 'error');
+      console.error('Error resolving poll:', error);
+      showNotification(error.message || 'Failed to resolve poll', 'error');
+    }
+  };
+
+  const handleSyncClaimableMatch = async (matchId) => {
+    try {
+      const { data } = await api.get(`/admin/claimable-updates/matches/${matchId}`);
+      const { marketId, claimableBoostUpdates = [], claimableMarketUpdates = [] } = data || {};
+      if (!marketId || (claimableBoostUpdates.length === 0 && claimableMarketUpdates.length === 0)) {
+        showNotification('No claimable updates for this match', 'info');
+        return;
+      }
+      let count = 0;
+      for (const { walletAddress, amount } of claimableBoostUpdates) {
+        await setClaimableBoost(marketId, walletAddress, amount);
+        count++;
+      }
+      for (const { walletAddress, amount } of claimableMarketUpdates) {
+        await setClaimableMarket(marketId, walletAddress, amount);
+        count++;
+      }
+      showNotification(`Synced ${count} claimable balance(s) on chain`, 'success');
+      fetchData();
+    } catch (error) {
+      console.error('Error syncing claimable:', error);
+      showNotification(error.response?.data?.message || error.message || 'Failed to sync claimable', 'error');
+    }
+  };
+
+  const handleSyncClaimablePoll = async (pollId) => {
+    try {
+      const { data } = await api.get(`/admin/claimable-updates/polls/${pollId}`);
+      const { marketId, claimableBoostUpdates = [], claimableMarketUpdates = [] } = data || {};
+      if (!marketId || (claimableBoostUpdates.length === 0 && claimableMarketUpdates.length === 0)) {
+        showNotification('No claimable updates for this poll', 'info');
+        return;
+      }
+      let count = 0;
+      for (const { walletAddress, amount } of claimableBoostUpdates) {
+        await setClaimableBoost(marketId, walletAddress, amount);
+        count++;
+      }
+      for (const { walletAddress, amount } of claimableMarketUpdates) {
+        await setClaimableMarket(marketId, walletAddress, amount);
+        count++;
+      }
+      showNotification(`Synced ${count} claimable balance(s) on chain`, 'success');
+      fetchData();
+    } catch (error) {
+      console.error('Error syncing claimable:', error);
+      showNotification(error.response?.data?.message || error.message || 'Failed to sync claimable', 'error');
     }
   };
 
@@ -204,9 +536,9 @@ const Admin = () => {
     }
   };
 
-  const handleUpdatePollStatus = async (pollId, status) => {
+  const handleUpdatePollStatus = async (pollId, updates) => {
     try {
-      await api.post(`/admin/polls/${pollId}/status`, { status });
+      await api.post(`/admin/polls/${pollId}/status`, updates);
       fetchData();
       showNotification('Poll status updated successfully!', 'success');
     } catch (error) {
@@ -216,11 +548,69 @@ const Admin = () => {
 
   const handleAddPollLiquidity = async (pollId, liquidity) => {
     try {
-      await api.post(`/admin/polls/${pollId}/liquidity`, liquidity);
-      fetchData();
-      showNotification('Liquidity added successfully!', 'success');
+      // Auto-connects wallet and switches network if needed
+      // Get poll to get marketId
+      const pollResponse = await api.get(`/polls/${pollId}`);
+      const poll = pollResponse.data;
+      
+      if (!poll.marketId) {
+        showNotification('Market not created on blockchain yet', 'error');
+        return;
+      }
+      
+      // Add liquidity on blockchain first
+      try {
+        if (poll.optionType === 'options') {
+          // Optional poll: support both shapes:
+          // - liquidity.options: [{ text, liquidity }]
+          // - liquidity.optionIndex + liquidity.optionLiquidity (from modal)
+          if (Array.isArray(liquidity.options) && liquidity.options.length > 0) {
+            for (const opt of liquidity.options) {
+              const amount = parseFloat(opt?.liquidity) || 0;
+              const text = String(opt?.text || '').trim();
+              if (amount > 0 && text) {
+                await addLiquidity(poll.marketId, text, amount);
+              }
+            }
+          } else if (liquidity.optionIndex !== undefined && liquidity.optionIndex !== '' && liquidity.optionLiquidity !== undefined) {
+            const idx = parseInt(liquidity.optionIndex, 10);
+            const amount = parseFloat(liquidity.optionLiquidity) || 0;
+            const optionText = poll.options && poll.options[idx] ? String(poll.options[idx].text || '').trim() : '';
+            if (!optionText) {
+              showNotification('Invalid option selected for this poll', 'error');
+              return;
+            }
+            if (amount > 0) {
+              await addLiquidity(poll.marketId, optionText, amount);
+            }
+          } else {
+            showNotification('Please select an option and enter liquidity amount', 'warning');
+            return;
+          }
+        } else {
+          // Normal Yes/No poll
+          if (liquidity.yesLiquidity > 0) {
+            await addLiquidity(poll.marketId, 'YES', liquidity.yesLiquidity);
+          }
+          if (liquidity.noLiquidity > 0) {
+            await addLiquidity(poll.marketId, 'NO', liquidity.noLiquidity);
+          }
+        }
+        
+        showNotification('Liquidity added on blockchain!', 'success');
+        
+        // Update backend only after blockchain success
+        await api.post(`/admin/polls/${pollId}/liquidity`, liquidity);
+        fetchData();
+        showNotification('Liquidity added successfully!', 'success');
+      } catch (blockchainError) {
+        console.error('Blockchain transaction failed:', blockchainError);
+        showNotification(blockchainError.message || 'Blockchain transaction failed. Please try again.', 'error');
+        throw blockchainError; // Re-throw to prevent backend call
+      }
     } catch (error) {
-      showNotification(error.response?.data?.message || 'Failed to add liquidity', 'error');
+      console.error('Error adding liquidity:', error);
+      showNotification(error.message || 'Failed to add liquidity', 'error');
     }
   };
 
@@ -304,13 +694,41 @@ const Admin = () => {
     }
   };
 
-  const handleUpdateStatus = async (matchId, status) => {
+  const handleUpdateStatus = async (matchId, updates) => {
     try {
-      await api.post(`/admin/matches/${matchId}/status`, { status });
-      fetchData();
-      showNotification('Status updated successfully!', 'success');
+      // Auto-connects wallet and switches network if needed
+      // Get match to get marketId
+      const matchResponse = await api.get(`/matches/${matchId}`);
+      const match = matchResponse.data;
+      
+      if (!match.marketId) {
+        showNotification('Market not created on blockchain yet', 'error');
+        return;
+      }
+      
+      // Map status to blockchain enum (0=Upcoming, 1=Active, 2=Locked, 3=Resolved)
+      let statusValue = 0;
+      if (updates.status === 'active') statusValue = 1;
+      else if (updates.status === 'locked') statusValue = 2;
+      else if (updates.status === 'resolved' || updates.status === 'completed') statusValue = 3;
+      
+      // Update status on blockchain first
+      try {
+        const txHash = await updateMarketStatus(match.marketId, statusValue);
+        showNotification(`Status updated on blockchain! TX: ${txHash.slice(0, 10)}...`, 'success');
+        
+        // Update in backend only after blockchain success
+        await api.post(`/admin/matches/${matchId}/status`, updates);
+        fetchData();
+        showNotification('Status updated successfully!', 'success');
+      } catch (blockchainError) {
+        console.error('Blockchain transaction failed:', blockchainError);
+        showNotification(blockchainError.message || 'Blockchain transaction failed. Please try again.', 'error');
+        throw blockchainError; // Re-throw to prevent backend call
+      }
     } catch (error) {
-      showNotification(error.response?.data?.message || 'Failed to update status', 'error');
+      console.error('Error updating status:', error);
+      showNotification(error.message || 'Failed to update status', 'error');
     }
   };
 
@@ -347,9 +765,13 @@ const Admin = () => {
             cups={cups}
             stages={stages}
             loading={loading}
+            tablePage={tablePage}
+            setTablePage={setTablePage}
+            itemsPerPage={ITEMS_PER_PAGE}
             onCreateMatch={handleCreateMatch}
             onUpdateMatch={handleUpdateMatch}
             onResolveMatch={handleResolveMatch}
+            onSyncClaimable={handleSyncClaimableMatch}
             onUpdateStatus={handleUpdateStatus}
             onDeleteMatch={handleDeleteMatch}
             onAddLiquidity={handleAddMatchLiquidity}
@@ -361,8 +783,12 @@ const Admin = () => {
             cups={cups}
             stages={stages}
             loading={loading}
+            tablePage={tablePage}
+            setTablePage={setTablePage}
+            itemsPerPage={ITEMS_PER_PAGE}
             onCreatePoll={handleCreatePoll}
             onResolvePoll={handleResolvePoll}
+            onSyncClaimable={handleSyncClaimablePoll}
             onUpdatePoll={handleUpdatePoll}
             onUpdatePollStatus={handleUpdatePollStatus}
             onAddLiquidity={handleAddPollLiquidity}
@@ -372,7 +798,10 @@ const Admin = () => {
         {activeTab === 'cups' && (
           <CupsTab 
             cups={cups} 
-            loading={loading} 
+            loading={loading}
+            tablePage={tablePage}
+            setTablePage={setTablePage}
+            itemsPerPage={ITEMS_PER_PAGE}
             onCreateCup={handleCreateCup}
             onUpdateCup={handleUpdateCup}
             onDeleteCup={handleDeleteCup}
@@ -384,6 +813,9 @@ const Admin = () => {
             cups={cups}
             stages={stages}
             loading={loading}
+            tablePage={tablePage}
+            setTablePage={setTablePage}
+            itemsPerPage={ITEMS_PER_PAGE}
             onCreateStage={handleCreateStage}
             onUpdateStage={handleUpdateStage}
             onDeleteStage={handleDeleteStage}
@@ -393,6 +825,9 @@ const Admin = () => {
           <BlogsTab
             blogs={blogs}
             loading={loading}
+            tablePage={tablePage}
+            setTablePage={setTablePage}
+            itemsPerPage={ITEMS_PER_PAGE}
             onCreateBlog={handleCreateBlog}
             onUpdateBlog={handleUpdateBlog}
             onDeleteBlog={handleDeleteBlog}
@@ -406,7 +841,7 @@ const Admin = () => {
   );
 };
 
-const MatchesTab = ({ matches, cups, stages, loading, onCreateMatch, onUpdateMatch, onResolveMatch, onUpdateStatus, onDeleteMatch, onAddLiquidity }) => {
+const MatchesTab = ({ matches, cups, stages, loading, tablePage, setTablePage, itemsPerPage, onCreateMatch, onUpdateMatch, onResolveMatch, onSyncClaimable, onUpdateStatus, onDeleteMatch, onAddLiquidity }) => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showResolveModal, setShowResolveModal] = useState(null);
   const [showStatusModal, setShowStatusModal] = useState(null);
@@ -443,7 +878,9 @@ const MatchesTab = ({ matches, cups, stages, loading, onCreateMatch, onUpdateMat
             </tr>
           </thead>
           <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-            {matches.map((match) => (
+            {(() => {
+              const paginatedMatches = matches.slice((tablePage - 1) * itemsPerPage, tablePage * itemsPerPage);
+              return paginatedMatches.map((match) => (
               <tr key={match._id}>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
                   {match.teamA} vs {match.teamB}
@@ -461,7 +898,21 @@ const MatchesTab = ({ matches, cups, stages, loading, onCreateMatch, onUpdateMat
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                  {match.result || 'Pending'}
+                  {(() => {
+                    if (!match.result) return 'Pending';
+                    const result = String(match.result).trim();
+                    if (result === 'TeamA' || result.toLowerCase() === 'teama') {
+                      return match.teamA || 'Team A';
+                    }
+                    if (result === 'TeamB' || result.toLowerCase() === 'teamb') {
+                      return match.teamB || 'Team B';
+                    }
+                    if (result === 'Draw' || result.toLowerCase() === 'draw') {
+                      return 'Draw';
+                    }
+                    // If backend already stored a display name, show it as-is
+                    return result;
+                  })()}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <div className="flex flex-wrap gap-2">
@@ -491,6 +942,15 @@ const MatchesTab = ({ matches, cups, stages, loading, onCreateMatch, onUpdateMat
                         Resolve
                       </button>
                     )}
+                    {match.isResolved && match.marketId && (
+                      <button
+                        onClick={() => onSyncClaimable(match._id)}
+                        className="px-3 py-1 bg-teal-500 text-white rounded hover:bg-teal-600 text-xs"
+                        title="Sync claimable balances on chain (fix Market/Boost claim)"
+                      >
+                        Sync claimable
+                      </button>
+                    )}
                     <button
                       onClick={() => setShowDeleteModal(match)}
                       className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs"
@@ -500,10 +960,32 @@ const MatchesTab = ({ matches, cups, stages, loading, onCreateMatch, onUpdateMat
                   </div>
                 </td>
               </tr>
-            ))}
+            ));
+            })()}
           </tbody>
         </table>
         </div>
+        {matches.length > itemsPerPage && (
+          <div className="flex items-center justify-between px-6 py-3 border-t border-gray-200 dark:border-gray-700">
+            <button
+              onClick={() => setTablePage((p) => Math.max(1, p - 1))}
+              disabled={tablePage <= 1}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              Page {tablePage} of {Math.max(1, Math.ceil(matches.length / itemsPerPage))} ({matches.length} total)
+            </span>
+            <button
+              onClick={() => setTablePage((p) => Math.min(Math.ceil(matches.length / itemsPerPage), p + 1))}
+              disabled={tablePage >= Math.ceil(matches.length / itemsPerPage)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
 
       {showCreateModal && (
@@ -576,9 +1058,9 @@ const MatchesTab = ({ matches, cups, stages, loading, onCreateMatch, onUpdateMat
         <AddLiquidityModal
           match={showLiquidityModal}
           onClose={() => setShowLiquidityModal(null)}
-          onSubmit={(liquidity) => {
-            onAddLiquidity(showLiquidityModal._id, liquidity);
-            setShowLiquidityModal(null);
+          onSubmit={async (liquidity) => {
+            await onAddLiquidity(showLiquidityModal._id, liquidity);
+            // Modal will close itself after successful submission
           }}
         />
       )}
@@ -598,8 +1080,14 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
     marketTeamBLiquidity: '',
     marketDrawLiquidity: '',
     isFeatured: false,
+    isSponsored: false,
+    sponsoredImages: [],
+    lockedTime: '',
+    teamAImage: '',
+    teamBImage: '',
   });
   const [availableStages, setAvailableStages] = useState([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (formData.cup) {
@@ -623,39 +1111,64 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
     }
   }, [formData.cup, cups]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    const selectedStage = availableStages.find(s => s._id === formData.stage);
-    onSubmit({
-      ...formData,
-      stageName: selectedStage?.name || formData.stageName,
-      marketTeamALiquidity: parseFloat(formData.marketTeamALiquidity) || 0,
-      marketTeamBLiquidity: parseFloat(formData.marketTeamBLiquidity) || 0,
-      marketDrawLiquidity: parseFloat(formData.marketDrawLiquidity) || 0,
-    });
-    onClose();
+    setIsSubmitting(true);
+    try {
+      const selectedStage = availableStages.find(s => s._id === formData.stage);
+      await onSubmit({
+        ...formData,
+        stageName: selectedStage?.name || formData.stageName,
+        marketTeamALiquidity: parseFloat(formData.marketTeamALiquidity) || 0,
+        marketTeamBLiquidity: parseFloat(formData.marketTeamBLiquidity) || 0,
+        marketDrawLiquidity: parseFloat(formData.marketDrawLiquidity) || 0,
+      });
+      // Only close modal after successful submission
+      onClose();
+    } catch (error) {
+      console.error('Error creating match:', error);
+      // Don't close modal on error
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <Modal isOpen={true} onClose={onClose} title="Create Match" size="lg">
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
-          <input
-            type="text"
-            placeholder="Team A"
-            value={formData.teamA}
-            onChange={(e) => setFormData({ ...formData, teamA: e.target.value })}
-            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
-            required
-          />
-          <input
-            type="text"
-            placeholder="Team B"
-            value={formData.teamB}
-            onChange={(e) => setFormData({ ...formData, teamB: e.target.value })}
-            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
-            required
-          />
+          <div>
+            <input
+              type="text"
+              placeholder="Team A"
+              value={formData.teamA}
+              onChange={(e) => setFormData({ ...formData, teamA: e.target.value })}
+              className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white mb-2"
+              required
+            />
+            <ImageUpload
+              label="Team A Image"
+              value={formData.teamAImage}
+              onChange={(url) => setFormData({ ...formData, teamAImage: url })}
+              folder="wergame/teams"
+            />
+          </div>
+          <div>
+            <input
+              type="text"
+              placeholder="Team B"
+              value={formData.teamB}
+              onChange={(e) => setFormData({ ...formData, teamB: e.target.value })}
+              className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white mb-2"
+              required
+            />
+            <ImageUpload
+              label="Team B Image"
+              value={formData.teamBImage}
+              onChange={(url) => setFormData({ ...formData, teamBImage: url })}
+              folder="wergame/teams"
+            />
+          </div>
         </div>
         <input
           type="datetime-local"
@@ -745,26 +1258,89 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
             className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
           />
         </div>
-        <label className="flex items-center">
+        <div className="space-y-3">
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={formData.isFeatured}
+              onChange={(e) => setFormData({ ...formData, isFeatured: e.target.checked })}
+              className="mr-2"
+            />
+            <span className="text-gray-700 dark:text-gray-300">Featured Match</span>
+          </label>
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={formData.isSponsored}
+              onChange={(e) => setFormData({ ...formData, isSponsored: e.target.checked })}
+              className="mr-2"
+            />
+            <span className="text-gray-700 dark:text-gray-300">Sponsored Match</span>
+          </label>
+        </div>
+        
+        {/* Sponsored Images - Show when sponsored is checked */}
+        {formData.isSponsored && (
+          <div className="border p-4 rounded-lg dark:border-gray-700">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Sponsored Images (optional)
+            </label>
+            <div className="space-y-2">
+              {formData.sponsoredImages.map((img, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <img src={img} alt={`Sponsor ${idx + 1}`} className="w-16 h-16 object-cover rounded-lg" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newImages = formData.sponsoredImages.filter((_, i) => i !== idx);
+                      setFormData({ ...formData, sponsoredImages: newImages });
+                    }}
+                    className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <ImageUpload
+                label="Add Sponsored Image"
+                value=""
+                onChange={(url) => {
+                  if (url) {
+                    setFormData({ ...formData, sponsoredImages: [...formData.sponsoredImages, url] });
+                  }
+                }}
+                folder="wergame/sponsored"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Locked Time */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Locked Time (optional) - When predictions should be locked
+          </label>
           <input
-            type="checkbox"
-            checked={formData.isFeatured}
-            onChange={(e) => setFormData({ ...formData, isFeatured: e.target.checked })}
-            className="mr-2"
+            type="datetime-local"
+            value={formData.lockedTime}
+            onChange={(e) => setFormData({ ...formData, lockedTime: e.target.value })}
+            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
           />
-          <span className="text-gray-700 dark:text-gray-300">Featured Match</span>
-        </label>
+        </div>
+
         <div className="flex space-x-2">
           <button
             type="submit"
-            className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+            disabled={isSubmitting}
+            className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Create
+            {isSubmitting ? 'Creating...' : 'Create'}
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
+            disabled={isSubmitting}
+            className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Cancel
           </button>
@@ -776,30 +1352,51 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
 
 const ResolveModal = ({ item, type, onClose, onSubmit }) => {
   const [result, setResult] = useState('');
+  const [optionIndex, setOptionIndex] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // Map the display value to the backend expected value
-    let backendResult = result;
-    if (type === 'match') {
-      if (result === item.teamA) {
-        backendResult = 'teamA';
-      } else if (result === item.teamB) {
-        backendResult = 'teamB';
-      } else if (result === 'Draw') {
-        backendResult = 'draw';
+    setIsSubmitting(true);
+    
+    try {
+      // Map the display value to the backend expected value
+      let backendResult = result;
+      if (type === 'match') {
+        if (result === item.teamA) {
+          backendResult = 'teamA';
+        } else if (result === item.teamB) {
+          backendResult = 'teamB';
+        } else if (result === 'Draw') {
+          backendResult = 'draw';
+        }
+        await onSubmit(item._id, backendResult);
+      } else {
+        // For polls
+        if (item.optionType === 'options') {
+          // Option-based poll - send optionIndex
+          await onSubmit(item._id, null, parseInt(optionIndex));
+        } else {
+          // Normal Yes/No poll
+          backendResult = result.toUpperCase();
+          await onSubmit(item._id, backendResult);
+        }
       }
-    } else {
-      // For polls, normalize to uppercase
-      backendResult = result.toUpperCase();
+      // Only close modal after successful submission
+      onClose();
+    } catch (error) {
+      // Error already handled in onSubmit, just don't close modal
+      console.error('Error in resolve modal:', error);
+    } finally {
+      setIsSubmitting(false);
     }
-    onSubmit(item._id, backendResult);
-    onClose();
   };
 
   const options = type === 'match' 
     ? [item.teamA, 'Draw', item.teamB]
-    : ['YES', 'NO'];
+    : (item.optionType === 'options' && item.options) 
+      ? item.options.map((opt, idx) => ({ text: opt.text, index: idx, image: opt.image }))
+      : ['YES', 'NO'];
 
   return (
     <Modal isOpen={true} onClose={onClose} title={`Resolve ${type === 'match' ? 'Match' : 'Poll'}`}>
@@ -808,29 +1405,66 @@ const ResolveModal = ({ item, type, onClose, onSubmit }) => {
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             Result
           </label>
-          <select
-            value={result}
-            onChange={(e) => setResult(e.target.value)}
-            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
-            required
-          >
-            <option value="">Select result</option>
-            {options.map((opt) => (
-              <option key={opt} value={opt}>{opt}</option>
-            ))}
-          </select>
+          {type === 'poll' && item.optionType === 'options' ? (
+            <div className="space-y-2">
+              {options.map((opt) => (
+                <label
+                  key={opt.index}
+                  className={`flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 ${
+                    optionIndex === opt.index.toString() ? 'border-blue-500 bg-blue-50 dark:bg-blue-900' : ''
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="pollOption"
+                    value={opt.index}
+                    checked={optionIndex === opt.index.toString()}
+                    onChange={(e) => setOptionIndex(e.target.value)}
+                    className="mr-3"
+                    required
+                  />
+                  {opt.image && (
+                    <img src={opt.image} alt={opt.text} className="w-10 h-10 object-cover rounded-full mr-3" />
+                  )}
+                  <span className="text-gray-900 dark:text-white font-medium">{opt.text}</span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <select
+              value={type === 'poll' && item.optionType === 'options' ? optionIndex : result}
+              onChange={(e) => {
+                if (type === 'poll' && item.optionType === 'options') {
+                  setOptionIndex(e.target.value);
+                } else {
+                  setResult(e.target.value);
+                }
+              }}
+              className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+              required
+            >
+              <option value="">Select result</option>
+              {options.map((opt) => (
+                <option key={typeof opt === 'string' ? opt : opt.index} value={typeof opt === 'string' ? opt : opt.index}>
+                  {typeof opt === 'string' ? opt : opt.text}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
         <div className="flex space-x-2">
           <button
             type="submit"
-            className="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600"
+            disabled={isSubmitting}
+            className="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Resolve
+            {isSubmitting ? 'Resolving...' : 'Resolve'}
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
+            disabled={isSubmitting}
+            className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Cancel
           </button>
@@ -845,24 +1479,39 @@ const StatusModal = ({ match, onClose, onSubmit }) => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSubmit(match._id, status);
+    const updates = { status };
+    // If status is set to locked, immediately lock (override any locked time)
+    if (status === 'locked') {
+      updates.lockedTime = new Date().toISOString();
+    }
+    onSubmit(match._id, updates);
     onClose();
   };
 
   return (
     <Modal isOpen={true} onClose={onClose} title="Update Match Status">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
-          required
-        >
-          <option value="upcoming">Upcoming</option>
-          <option value="live">Live</option>
-          <option value="locked">Locked</option>
-          <option value="completed">Completed</option>
-        </select>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Status
+          </label>
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+            required
+          >
+            <option value="upcoming">Upcoming</option>
+            <option value="live">Live</option>
+            <option value="locked">Locked</option>
+            <option value="completed">Completed</option>
+          </select>
+          {status === 'locked' && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+              Setting status to "Locked" will immediately lock predictions for this match.
+            </p>
+          )}
+        </div>
         <div className="flex space-x-2">
           <button
             type="submit"
@@ -883,7 +1532,7 @@ const StatusModal = ({ match, onClose, onSubmit }) => {
   );
 };
 
-const PollsTab = ({ polls, cups, stages, loading, onCreatePoll, onResolvePoll, onUpdatePoll, onUpdatePollStatus, onAddLiquidity, onDeletePoll }) => {
+const PollsTab = ({ polls, cups, stages, loading, tablePage, setTablePage, itemsPerPage, onCreatePoll, onResolvePoll, onSyncClaimable, onUpdatePoll, onUpdatePollStatus, onAddLiquidity, onDeletePoll }) => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showResolveModal, setShowResolveModal] = useState(null);
   const [showEditModal, setShowEditModal] = useState(null);
@@ -918,8 +1567,10 @@ const PollsTab = ({ polls, cups, stages, loading, onCreatePoll, onResolvePoll, o
             </tr>
           </thead>
           <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-            {polls.length > 0 ? (
-              polls.map((poll) => (
+            {(() => {
+              const paginatedPolls = polls.slice((tablePage - 1) * itemsPerPage, tablePage * itemsPerPage);
+              return polls.length > 0 ? (
+              paginatedPolls.map((poll) => (
                 <tr key={poll._id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
                     {poll.question}
@@ -967,6 +1618,15 @@ const PollsTab = ({ polls, cups, stages, loading, onCreatePoll, onResolvePoll, o
                           Resolve
                         </button>
                       )}
+                      {poll.isResolved && poll.marketId && (
+                        <button
+                          onClick={() => onSyncClaimable(poll._id)}
+                          className="px-3 py-1 bg-teal-500 text-white rounded hover:bg-teal-600 text-xs"
+                          title="Sync claimable balances on chain (fix Market/Boost claim)"
+                        >
+                          Sync claimable
+                        </button>
+                      )}
                       <button
                         onClick={() => setShowDeleteModal(poll)}
                         className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs"
@@ -983,10 +1643,32 @@ const PollsTab = ({ polls, cups, stages, loading, onCreatePoll, onResolvePoll, o
                   No polls found. Create one to get started!
                 </td>
               </tr>
-            )}
+            );
+            })()}
           </tbody>
         </table>
         </div>
+        {polls.length > itemsPerPage && (
+          <div className="flex items-center justify-between px-6 py-3 border-t border-gray-200 dark:border-gray-700">
+            <button
+              onClick={() => setTablePage((p) => Math.max(1, p - 1))}
+              disabled={tablePage <= 1}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              Page {tablePage} of {Math.max(1, Math.ceil(polls.length / itemsPerPage))} ({polls.length} total)
+            </span>
+            <button
+              onClick={() => setTablePage((p) => Math.min(Math.ceil(polls.length / itemsPerPage), p + 1))}
+              disabled={tablePage >= Math.ceil(polls.length / itemsPerPage)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
       
       {showCreateModal && (
@@ -1030,9 +1712,9 @@ const PollsTab = ({ polls, cups, stages, loading, onCreatePoll, onResolvePoll, o
         <AddPollLiquidityModal
           poll={showLiquidityModal}
           onClose={() => setShowLiquidityModal(null)}
-          onSubmit={(liquidity) => {
-            onAddLiquidity(showLiquidityModal._id, liquidity);
-            setShowLiquidityModal(null);
+          onSubmit={async (liquidity) => {
+            await onAddLiquidity(showLiquidityModal._id, liquidity);
+            // Modal will close itself after successful submission
           }}
         />
       )}
@@ -1073,19 +1755,66 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
     description: '',
     type: 'match',
     cup: '',
+    optionType: 'normal',
     marketYesLiquidity: '',
     marketNoLiquidity: '',
     isFeatured: false,
+    isSponsored: false,
+    sponsoredImages: [],
+    lockedTime: '',
+    options: [],
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    onSubmit({
+  const addOption = () => {
+    setFormData({
       ...formData,
-      marketYesLiquidity: parseFloat(formData.marketYesLiquidity) || 0,
-      marketNoLiquidity: parseFloat(formData.marketNoLiquidity) || 0,
+      options: [...formData.options, { text: '', image: '', liquidity: '' }],
     });
-    onClose();
+  };
+
+  const removeOption = (index) => {
+    const newOptions = formData.options.filter((_, i) => i !== index);
+    setFormData({ ...formData, options: newOptions });
+  };
+
+  const updateOption = (index, field, value) => {
+    const newOptions = [...formData.options];
+    newOptions[index] = { ...newOptions[index], [field]: value };
+    setFormData({ ...formData, options: newOptions });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const submitData = {
+        ...formData,
+        isFeatured: formData.isFeatured || false,
+      };
+
+      if (formData.optionType === 'options') {
+        // Option-based poll
+        submitData.options = formData.options.map(opt => ({
+          text: opt.text,
+          image: opt.image || undefined,
+          liquidity: parseFloat(opt.liquidity) || 0,
+        }));
+      } else {
+        // Normal Yes/No poll
+        submitData.marketYesLiquidity = parseFloat(formData.marketYesLiquidity) || 0;
+        submitData.marketNoLiquidity = parseFloat(formData.marketNoLiquidity) || 0;
+      }
+
+      await onSubmit(submitData);
+      // Only close modal after successful submission
+      onClose();
+    } catch (error) {
+      console.error('Error creating poll:', error);
+      // Don't close modal on error
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -1127,38 +1856,188 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
             <option key={cup._id} value={cup._id}>{cup.name}</option>
           ))}
         </select>
-        <div className="grid grid-cols-2 gap-4">
-          <input
-            type="number"
-            step="0.01"
-            placeholder="Market YES Liquidity (ETH)"
-            value={formData.marketYesLiquidity}
-            onChange={(e) => setFormData({ ...formData, marketYesLiquidity: e.target.value })}
+        
+        {/* Poll Type Selection */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Poll Type
+          </label>
+          <select
+            value={formData.optionType}
+            onChange={(e) => setFormData({ ...formData, optionType: e.target.value, options: e.target.value === 'normal' ? [] : formData.options })}
             className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
-          />
+          >
+            <option value="normal">Normal (Yes/No)</option>
+            <option value="options">Options (Custom)</option>
+          </select>
+        </div>
+
+        {/* Normal Yes/No Poll Liquidity */}
+        {formData.optionType === 'normal' && (
+          <div className="grid grid-cols-2 gap-4">
+            <input
+              type="number"
+              step="0.01"
+              placeholder="Market YES Liquidity (ETH)"
+              value={formData.marketYesLiquidity}
+              onChange={(e) => setFormData({ ...formData, marketYesLiquidity: e.target.value })}
+              className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+            />
+            <input
+              type="number"
+              step="0.01"
+              placeholder="Market NO Liquidity (ETH)"
+              value={formData.marketNoLiquidity}
+              onChange={(e) => setFormData({ ...formData, marketNoLiquidity: e.target.value })}
+              className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+            />
+          </div>
+        )}
+
+        {/* Option-based Poll Options */}
+        {formData.optionType === 'options' && (
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Poll Options
+              </label>
+              <button
+                type="button"
+                onClick={addOption}
+                className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm"
+              >
+                + Add Option
+              </button>
+            </div>
+            {formData.options.map((option, index) => (
+              <div key={index} className="border rounded-lg p-4 space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Option {index + 1}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeOption(index)}
+                    className="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs"
+                  >
+                    Remove
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Option text"
+                  value={option.text}
+                  onChange={(e) => updateOption(index, 'text', e.target.value)}
+                  className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+                  required
+                />
+                <ImageUpload
+                  label="Option Image"
+                  value={option.image}
+                  onChange={(url) => updateOption(index, 'image', url)}
+                  folder="wergame/poll-options"
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="Initial Liquidity (ETH)"
+                  value={option.liquidity}
+                  onChange={(e) => updateOption(index, 'liquidity', e.target.value)}
+                  className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+                />
+              </div>
+            ))}
+            {formData.options.length === 0 && (
+              <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                Click "Add Option" to create poll options
+              </p>
+            )}
+          </div>
+        )}
+        <div className="space-y-3">
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={formData.isFeatured}
+              onChange={(e) => setFormData({ ...formData, isFeatured: e.target.checked })}
+              className="mr-2"
+            />
+            <span className="text-gray-700 dark:text-gray-300">Featured Poll</span>
+          </label>
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={formData.isSponsored}
+              onChange={(e) => setFormData({ ...formData, isSponsored: e.target.checked })}
+              className="mr-2"
+            />
+            <span className="text-gray-700 dark:text-gray-300">Sponsored Poll</span>
+          </label>
+        </div>
+        
+        {/* Sponsored Images - Show when sponsored is checked */}
+        {formData.isSponsored && (
+          <div className="border p-4 rounded-lg dark:border-gray-700">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Sponsored Images (optional)
+            </label>
+            <div className="space-y-2">
+              {formData.sponsoredImages.map((img, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <img src={img} alt={`Sponsor ${idx + 1}`} className="w-16 h-16 object-cover rounded-lg" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newImages = formData.sponsoredImages.filter((_, i) => i !== idx);
+                      setFormData({ ...formData, sponsoredImages: newImages });
+                    }}
+                    className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <ImageUpload
+                label="Add Sponsored Image"
+                value=""
+                onChange={(url) => {
+                  if (url) {
+                    setFormData({ ...formData, sponsoredImages: [...formData.sponsoredImages, url] });
+                  }
+                }}
+                folder="wergame/sponsored"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Locked Time */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Locked Time (optional) - When predictions should be locked
+          </label>
           <input
-            type="number"
-            step="0.01"
-            placeholder="Market NO Liquidity (ETH)"
-            value={formData.marketNoLiquidity}
-            onChange={(e) => setFormData({ ...formData, marketNoLiquidity: e.target.value })}
+            type="datetime-local"
+            value={formData.lockedTime}
+            onChange={(e) => setFormData({ ...formData, lockedTime: e.target.value })}
             className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
           />
         </div>
-        <label className="flex items-center">
-          <input
-            type="checkbox"
-            checked={formData.isFeatured}
-            onChange={(e) => setFormData({ ...formData, isFeatured: e.target.checked })}
-            className="mr-2"
-          />
-          <span className="text-gray-700 dark:text-gray-300">Featured Poll</span>
-        </label>
+
         <div className="flex space-x-2">
-          <button type="submit" className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
-            Create
+          <button 
+            type="submit" 
+            disabled={isSubmitting}
+            className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSubmitting ? 'Creating...' : 'Create'}
           </button>
-          <button type="button" onClick={onClose} className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg">
+          <button 
+            type="button" 
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             Cancel
           </button>
         </div>
@@ -1167,7 +2046,7 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
   );
 };
 
-const CupsTab = ({ cups, loading, onCreateCup, onUpdateCup, onDeleteCup, onUpdateNavbarOrder }) => {
+const CupsTab = ({ cups, loading, tablePage, setTablePage, itemsPerPage, onCreateCup, onUpdateCup, onDeleteCup, onUpdateNavbarOrder }) => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(null);
@@ -1295,8 +2174,10 @@ const CupsTab = ({ cups, loading, onCreateCup, onUpdateCup, onDeleteCup, onUpdat
             </tr>
           </thead>
           <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-            {cups.length > 0 ? (
-              cups.map((cup) => (
+            {(() => {
+              const paginatedCups = cups.slice((tablePage - 1) * itemsPerPage, tablePage * itemsPerPage);
+              return cups.length > 0 ? (
+              paginatedCups.map((cup) => (
                 <tr key={cup._id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
                     {cup.name}
@@ -1354,10 +2235,32 @@ const CupsTab = ({ cups, loading, onCreateCup, onUpdateCup, onDeleteCup, onUpdat
                   No cups found. Create one to get started!
                 </td>
               </tr>
-            )}
+            );
+            })()}
           </tbody>
         </table>
         </div>
+        {cups.length > itemsPerPage && (
+          <div className="flex items-center justify-between px-6 py-3 border-t border-gray-200 dark:border-gray-700">
+            <button
+              onClick={() => setTablePage((p) => Math.max(1, p - 1))}
+              disabled={tablePage <= 1}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              Page {tablePage} of {Math.max(1, Math.ceil(cups.length / itemsPerPage))} ({cups.length} total)
+            </span>
+            <button
+              onClick={() => setTablePage((p) => Math.min(Math.ceil(cups.length / itemsPerPage), p + 1))}
+              disabled={tablePage >= Math.ceil(cups.length / itemsPerPage)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
       
       {showCreateModal && (
@@ -1584,7 +2487,7 @@ const EditCupModal = ({ cup, onClose, onSubmit }) => {
   );
 };
 
-const StagesTab = ({ cups, stages, loading, onCreateStage, onUpdateStage, onDeleteStage }) => {
+const StagesTab = ({ cups, stages, loading, tablePage, setTablePage, itemsPerPage, onCreateStage, onUpdateStage, onDeleteStage }) => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(null);
   const [selectedCup, setSelectedCup] = useState(null);
@@ -1648,7 +2551,9 @@ const StagesTab = ({ cups, stages, loading, onCreateStage, onUpdateStage, onDele
             </tr>
           </thead>
           <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-            {filteredStages.map((stage) => (
+            {(() => {
+              const paginatedStages = filteredStages.slice((tablePage - 1) * itemsPerPage, tablePage * itemsPerPage);
+              return paginatedStages.map((stage) => (
               <tr key={stage._id}>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                   {stage.order}
@@ -1710,10 +2615,32 @@ const StagesTab = ({ cups, stages, loading, onCreateStage, onUpdateStage, onDele
                   </button>
                 </td>
               </tr>
-            ))}
+            ));
+            })()}
           </tbody>
         </table>
         </div>
+        {filteredStages.length > itemsPerPage && (
+          <div className="flex items-center justify-between px-6 py-3 border-t border-gray-200 dark:border-gray-700">
+            <button
+              onClick={() => setTablePage((p) => Math.max(1, p - 1))}
+              disabled={tablePage <= 1}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              Page {tablePage} of {Math.max(1, Math.ceil(filteredStages.length / itemsPerPage))} ({filteredStages.length} total)
+            </span>
+            <button
+              onClick={() => setTablePage((p) => Math.min(Math.ceil(filteredStages.length / itemsPerPage), p + 1))}
+              disabled={tablePage >= Math.ceil(filteredStages.length / itemsPerPage)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
 
       {filteredStages.length === 0 && (
@@ -1900,7 +2827,7 @@ const EditStageModal = ({ stage, cups, onClose, onSubmit }) => {
   );
 };
 
-const BlogsTab = ({ blogs, loading, onCreateBlog, onUpdateBlog, onDeleteBlog }) => {
+const BlogsTab = ({ blogs, loading, tablePage, setTablePage, itemsPerPage, onCreateBlog, onUpdateBlog, onDeleteBlog }) => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(null);
@@ -1933,7 +2860,9 @@ const BlogsTab = ({ blogs, loading, onCreateBlog, onUpdateBlog, onDeleteBlog }) 
             </tr>
           </thead>
           <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-            {blogs.map((blog) => (
+            {(() => {
+              const paginatedBlogs = blogs.slice((tablePage - 1) * itemsPerPage, tablePage * itemsPerPage);
+              return paginatedBlogs.map((blog) => (
               <tr key={blog._id}>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
                   {blog.title}
@@ -1975,10 +2904,32 @@ const BlogsTab = ({ blogs, loading, onCreateBlog, onUpdateBlog, onDeleteBlog }) 
                   </button>
                 </td>
               </tr>
-            ))}
+            ));
+            })()}
           </tbody>
         </table>
         </div>
+        {blogs.length > itemsPerPage && (
+          <div className="flex items-center justify-between px-6 py-3 border-t border-gray-200 dark:border-gray-700">
+            <button
+              onClick={() => setTablePage((p) => Math.max(1, p - 1))}
+              disabled={tablePage <= 1}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            <span className="text-sm text-gray-700 dark:text-gray-300">
+              Page {tablePage} of {Math.max(1, Math.ceil(blogs.length / itemsPerPage))} ({blogs.length} total)
+            </span>
+            <button
+              onClick={() => setTablePage((p) => Math.min(Math.ceil(blogs.length / itemsPerPage), p + 1))}
+              disabled={tablePage >= Math.ceil(blogs.length / itemsPerPage)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
 
       {blogs.length === 0 && (
@@ -2427,6 +3378,7 @@ const BlogEditor = ({ value, onChange }) => {
 // Settings Tab Component
 const SettingsTab = () => {
   const [dailyFreePlayLimit, setDailyFreePlayLimit] = useState(1);
+  const [pointsPerWin, setPointsPerWin] = useState(10);
   const [socialLinks, setSocialLinks] = useState({
     socialTwitter: '',
     socialFacebook: '',
@@ -2443,13 +3395,18 @@ const SettingsTab = () => {
 
   const fetchSettings = async () => {
     try {
-      const [freePlayResponse, socialLinksResponse] = await Promise.all([
+      const [freePlayResponse, pointsPerWinResponse, socialLinksResponse] = await Promise.all([
         api.get('/admin/settings/dailyFreePlayLimit'),
+        api.get('/admin/settings/pointsPerWin'),
         api.get('/admin/settings/social-links/all'),
       ]);
       
       if (freePlayResponse.data) {
         setDailyFreePlayLimit(freePlayResponse.data.value || 1);
+      }
+      
+      if (pointsPerWinResponse.data) {
+        setPointsPerWin(pointsPerWinResponse.data.value || 10);
       }
       
       if (socialLinksResponse.data) {
@@ -2472,6 +3429,7 @@ const SettingsTab = () => {
     try {
       await Promise.all([
         api.post('/admin/settings/dailyFreePlayLimit', { value: parseInt(dailyFreePlayLimit) }),
+        api.post('/admin/settings/pointsPerWin', { value: parseInt(pointsPerWin) }),
         api.post('/admin/settings/social-links', socialLinks),
       ]);
       showNotification('Settings saved successfully!', 'success');
@@ -2508,6 +3466,22 @@ const SettingsTab = () => {
                 value={dailyFreePlayLimit}
                 onChange={(e) => setDailyFreePlayLimit(e.target.value)}
                 className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Points per Win
+              </label>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
+                Points awarded to users for each winning prediction
+              </p>
+              <input
+                type="number"
+                min="1"
+                value={pointsPerWin}
+                onChange={(e) => setPointsPerWin(e.target.value)}
+                className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+                placeholder="10"
               />
             </div>
           </div>
@@ -2593,6 +3567,11 @@ const EditMatchModal = ({ match, cups, stages, onClose, onSubmit }) => {
     stage: match.stage?._id || match.stage || '',
     stageName: match.stageName || '',
     isFeatured: match.isFeatured || false,
+    isSponsored: match.isSponsored || false,
+    sponsoredImages: match.sponsoredImages || [],
+    lockedTime: match.lockedTime ? new Date(match.lockedTime).toISOString().slice(0, 16) : '',
+    teamAImage: match.teamAImage || '',
+    teamBImage: match.teamBImage || '',
   });
   const [availableStages, setAvailableStages] = useState([]);
 
@@ -2620,22 +3599,38 @@ const EditMatchModal = ({ match, cups, stages, onClose, onSubmit }) => {
     <Modal isOpen={true} onClose={onClose} title="Edit Match" size="lg">
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
-          <input
-            type="text"
-            placeholder="Team A"
-            value={formData.teamA}
-            onChange={(e) => setFormData({ ...formData, teamA: e.target.value })}
-            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
-            required
-          />
-          <input
-            type="text"
-            placeholder="Team B"
-            value={formData.teamB}
-            onChange={(e) => setFormData({ ...formData, teamB: e.target.value })}
-            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
-            required
-          />
+          <div>
+            <input
+              type="text"
+              placeholder="Team A"
+              value={formData.teamA}
+              onChange={(e) => setFormData({ ...formData, teamA: e.target.value })}
+              className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white mb-2"
+              required
+            />
+            <ImageUpload
+              label="Team A Image"
+              value={formData.teamAImage}
+              onChange={(url) => setFormData({ ...formData, teamAImage: url })}
+              folder="wergame/teams"
+            />
+          </div>
+          <div>
+            <input
+              type="text"
+              placeholder="Team B"
+              value={formData.teamB}
+              onChange={(e) => setFormData({ ...formData, teamB: e.target.value })}
+              className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white mb-2"
+              required
+            />
+            <ImageUpload
+              label="Team B Image"
+              value={formData.teamBImage}
+              onChange={(url) => setFormData({ ...formData, teamBImage: url })}
+              folder="wergame/teams"
+            />
+          </div>
         </div>
         <input
           type="datetime-local"
@@ -2670,15 +3665,76 @@ const EditMatchModal = ({ match, cups, stages, onClose, onSubmit }) => {
             ))}
           </select>
         )}
-        <label className="flex items-center">
+        <div className="space-y-3">
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={formData.isFeatured}
+              onChange={(e) => setFormData({ ...formData, isFeatured: e.target.checked })}
+              className="mr-2"
+            />
+            <span className="text-gray-700 dark:text-gray-300">Featured Match</span>
+          </label>
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={formData.isSponsored}
+              onChange={(e) => setFormData({ ...formData, isSponsored: e.target.checked })}
+              className="mr-2"
+            />
+            <span className="text-gray-700 dark:text-gray-300">Sponsored Match</span>
+          </label>
+        </div>
+        
+        {/* Sponsored Images - Show when sponsored is checked */}
+        {formData.isSponsored && (
+          <div className="border p-4 rounded-lg dark:border-gray-700">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Sponsored Images (optional)
+            </label>
+            <div className="space-y-2">
+              {formData.sponsoredImages.map((img, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <img src={img} alt={`Sponsor ${idx + 1}`} className="w-16 h-16 object-cover rounded-lg" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newImages = formData.sponsoredImages.filter((_, i) => i !== idx);
+                      setFormData({ ...formData, sponsoredImages: newImages });
+                    }}
+                    className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <ImageUpload
+                label="Add Sponsored Image"
+                value=""
+                onChange={(url) => {
+                  if (url) {
+                    setFormData({ ...formData, sponsoredImages: [...formData.sponsoredImages, url] });
+                  }
+                }}
+                folder="wergame/sponsored"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Locked Time */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Locked Time (optional) - When predictions should be locked
+          </label>
           <input
-            type="checkbox"
-            checked={formData.isFeatured}
-            onChange={(e) => setFormData({ ...formData, isFeatured: e.target.checked })}
-            className="mr-2"
+            type="datetime-local"
+            value={formData.lockedTime}
+            onChange={(e) => setFormData({ ...formData, lockedTime: e.target.value })}
+            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
           />
-          <span className="text-gray-700 dark:text-gray-300">Featured Match</span>
-        </label>
+        </div>
+
         <div className="flex space-x-2">
           <button type="submit" className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
             Update
@@ -2699,14 +3755,26 @@ const AddLiquidityModal = ({ match, onClose, onSubmit }) => {
     teamBLiquidity: '',
     drawLiquidity: '',
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    onSubmit({
-      teamALiquidity: parseFloat(formData.teamALiquidity) || 0,
-      teamBLiquidity: parseFloat(formData.teamBLiquidity) || 0,
-      drawLiquidity: parseFloat(formData.drawLiquidity) || 0,
-    });
+    setIsSubmitting(true);
+    
+    try {
+      await onSubmit({
+        teamALiquidity: parseFloat(formData.teamALiquidity) || 0,
+        teamBLiquidity: parseFloat(formData.teamBLiquidity) || 0,
+        drawLiquidity: parseFloat(formData.drawLiquidity) || 0,
+      });
+      // Only close modal after successful submission
+      onClose();
+    } catch (error) {
+      // Error already handled in onSubmit, just don't close modal
+      console.error('Error in add liquidity modal:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -2772,11 +3840,44 @@ const EditPollModal = ({ poll, cups, onClose, onSubmit }) => {
     type: poll.type || 'match',
     cup: poll.cup?._id || poll.cup || '',
     isFeatured: poll.isFeatured || false,
+    isSponsored: poll.isSponsored || false,
+    sponsoredImages: poll.sponsoredImages || [],
+    lockedTime: poll.lockedTime ? new Date(poll.lockedTime).toISOString().slice(0, 16) : '',
+    optionType: poll.optionType || 'normal',
+    options: poll.options ? poll.options.map(opt => ({ text: opt.text || '', image: opt.image || '', liquidity: opt.liquidity || '' })) : [],
   });
+
+  const addOption = () => {
+    setFormData({
+      ...formData,
+      options: [...formData.options, { text: '', image: '', liquidity: '' }],
+    });
+  };
+
+  const removeOption = (index) => {
+    const newOptions = formData.options.filter((_, i) => i !== index);
+    setFormData({ ...formData, options: newOptions });
+  };
+
+  const updateOption = (index, field, value) => {
+    const newOptions = [...formData.options];
+    newOptions[index] = { ...newOptions[index], [field]: value };
+    setFormData({ ...formData, options: newOptions });
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSubmit(formData);
+    const submitData = { ...formData };
+    
+    if (formData.optionType === 'options') {
+      submitData.options = formData.options.map(opt => ({
+        text: opt.text,
+        image: opt.image || undefined,
+        liquidity: parseFloat(opt.liquidity) || 0,
+      }));
+    }
+    
+    onSubmit(submitData);
   };
 
   return (
@@ -2818,15 +3919,153 @@ const EditPollModal = ({ poll, cups, onClose, onSubmit }) => {
             <option key={cup._id} value={cup._id}>{cup.name}</option>
           ))}
         </select>
-        <label className="flex items-center">
+        
+        {/* Poll Type Selection */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Poll Type
+          </label>
+          <select
+            value={formData.optionType}
+            onChange={(e) => setFormData({ ...formData, optionType: e.target.value, options: e.target.value === 'normal' ? [] : formData.options })}
+            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+          >
+            <option value="normal">Normal (Yes/No)</option>
+            <option value="options">Options (Custom)</option>
+          </select>
+        </div>
+
+        {/* Option-based Poll Options */}
+        {formData.optionType === 'options' && (
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Poll Options
+              </label>
+              <button
+                type="button"
+                onClick={addOption}
+                className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm"
+              >
+                + Add Option
+              </button>
+            </div>
+            {formData.options.map((option, index) => (
+              <div key={index} className="border rounded-lg p-4 space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Option {index + 1}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeOption(index)}
+                    className="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs"
+                  >
+                    Remove
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Option text"
+                  value={option.text}
+                  onChange={(e) => updateOption(index, 'text', e.target.value)}
+                  className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+                  required
+                />
+                <ImageUpload
+                  label="Option Image"
+                  value={option.image}
+                  onChange={(url) => updateOption(index, 'image', url)}
+                  folder="wergame/poll-options"
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="Initial Liquidity (ETH)"
+                  value={option.liquidity}
+                  onChange={(e) => updateOption(index, 'liquidity', e.target.value)}
+                  className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+                />
+              </div>
+            ))}
+            {formData.options.length === 0 && (
+              <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                Click "Add Option" to create poll options
+              </p>
+            )}
+          </div>
+        )}
+        
+        <div className="space-y-3">
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={formData.isFeatured}
+              onChange={(e) => setFormData({ ...formData, isFeatured: e.target.checked })}
+              className="mr-2"
+            />
+            <span className="text-gray-700 dark:text-gray-300">Featured Poll</span>
+          </label>
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={formData.isSponsored}
+              onChange={(e) => setFormData({ ...formData, isSponsored: e.target.checked })}
+              className="mr-2"
+            />
+            <span className="text-gray-700 dark:text-gray-300">Sponsored Poll</span>
+          </label>
+        </div>
+        
+        {/* Sponsored Images - Show when sponsored is checked */}
+        {formData.isSponsored && (
+          <div className="border p-4 rounded-lg dark:border-gray-700">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Sponsored Images (optional)
+            </label>
+            <div className="space-y-2">
+              {formData.sponsoredImages.map((img, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <img src={img} alt={`Sponsor ${idx + 1}`} className="w-16 h-16 object-cover rounded-lg" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newImages = formData.sponsoredImages.filter((_, i) => i !== idx);
+                      setFormData({ ...formData, sponsoredImages: newImages });
+                    }}
+                    className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <ImageUpload
+                label="Add Sponsored Image"
+                value=""
+                onChange={(url) => {
+                  if (url) {
+                    setFormData({ ...formData, sponsoredImages: [...formData.sponsoredImages, url] });
+                  }
+                }}
+                folder="wergame/sponsored"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Locked Time */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Locked Time (optional) - When predictions should be locked
+          </label>
           <input
-            type="checkbox"
-            checked={formData.isFeatured}
-            onChange={(e) => setFormData({ ...formData, isFeatured: e.target.checked })}
-            className="mr-2"
+            type="datetime-local"
+            value={formData.lockedTime}
+            onChange={(e) => setFormData({ ...formData, lockedTime: e.target.value })}
+            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
           />
-          <span className="text-gray-700 dark:text-gray-300">Featured Poll</span>
-        </label>
+        </div>
+
         <div className="flex space-x-2">
           <button type="submit" className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
             Update
@@ -2846,22 +4085,39 @@ const PollStatusModal = ({ poll, onClose, onSubmit }) => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSubmit(poll._id, status);
+    const updates = { status };
+    // If status is set to locked, immediately lock (override any locked time)
+    if (status === 'locked') {
+      updates.lockedTime = new Date().toISOString();
+    }
+    onSubmit(poll._id, updates);
+    onClose();
   };
 
   return (
     <Modal isOpen={true} onClose={onClose} title="Update Poll Status">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
-          required
-        >
-          <option value="upcoming">Upcoming</option>
-          <option value="active">Active</option>
-          <option value="settled">Settled</option>
-        </select>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Status
+          </label>
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+            required
+          >
+            <option value="upcoming">Upcoming</option>
+            <option value="active">Active</option>
+            <option value="locked">Locked</option>
+            <option value="settled">Settled</option>
+          </select>
+          {status === 'locked' && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+              Setting status to "Locked" will immediately lock predictions for this poll.
+            </p>
+          )}
+        </div>
         <div className="flex space-x-2">
           <button type="submit" className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
             Update
@@ -2880,50 +4136,117 @@ const AddPollLiquidityModal = ({ poll, onClose, onSubmit }) => {
   const [formData, setFormData] = useState({
     yesLiquidity: '',
     noLiquidity: '',
+    optionIndex: '',
+    optionLiquidity: '',
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    onSubmit({
-      yesLiquidity: parseFloat(formData.yesLiquidity) || 0,
-      noLiquidity: parseFloat(formData.noLiquidity) || 0,
-    });
+    setIsSubmitting(true);
+    
+    try {
+      if (poll.optionType === 'options') {
+        await onSubmit({
+          optionIndex: parseInt(formData.optionIndex),
+          optionLiquidity: parseFloat(formData.optionLiquidity) || 0,
+        });
+      } else {
+        await onSubmit({
+          yesLiquidity: parseFloat(formData.yesLiquidity) || 0,
+          noLiquidity: parseFloat(formData.noLiquidity) || 0,
+        });
+      }
+      // Only close modal after successful submission
+      onClose();
+    } catch (error) {
+      // Error already handled in onSubmit, just don't close modal
+      console.error('Error in add poll liquidity modal:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <Modal isOpen={true} onClose={onClose} title={`Add Liquidity - ${poll.question}`}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            YES Liquidity (ETH)
-          </label>
-          <input
-            type="number"
-            step="0.01"
-            value={formData.yesLiquidity}
-            onChange={(e) => setFormData({ ...formData, yesLiquidity: e.target.value })}
-            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
-            placeholder="0.0"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            NO Liquidity (ETH)
-          </label>
-          <input
-            type="number"
-            step="0.01"
-            value={formData.noLiquidity}
-            onChange={(e) => setFormData({ ...formData, noLiquidity: e.target.value })}
-            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
-            placeholder="0.0"
-          />
-        </div>
+        {poll.optionType === 'options' ? (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Select Option
+            </label>
+            <select
+              value={formData.optionIndex}
+              onChange={(e) => setFormData({ ...formData, optionIndex: e.target.value })}
+              className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+              required
+            >
+              <option value="">Select an option</option>
+              {poll.options && poll.options.map((option, index) => (
+                <option key={index} value={index}>
+                  {option.text} (Current: {option.liquidity || 0} ETH)
+                </option>
+              ))}
+            </select>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Liquidity to Add (ETH)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={formData.optionLiquidity}
+                onChange={(e) => setFormData({ ...formData, optionLiquidity: e.target.value })}
+                className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+                placeholder="0.0"
+                required
+              />
+            </div>
+          </div>
+        ) : (
+          <>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                YES Liquidity (ETH)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={formData.yesLiquidity}
+                onChange={(e) => setFormData({ ...formData, yesLiquidity: e.target.value })}
+                className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+                placeholder="0.0"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                NO Liquidity (ETH)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={formData.noLiquidity}
+                onChange={(e) => setFormData({ ...formData, noLiquidity: e.target.value })}
+                className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+                placeholder="0.0"
+              />
+            </div>
+          </>
+        )}
         <div className="flex space-x-2">
-          <button type="submit" className="flex-1 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600">
-            Add Liquidity
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="flex-1 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSubmitting ? 'Submitting…' : 'Add Liquidity'}
           </button>
-          <button type="button" onClick={onClose} className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             Cancel
           </button>
         </div>

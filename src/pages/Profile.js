@@ -1,22 +1,57 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useWallet } from '../context/WalletContext';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../utils/api';
+import { getWalletBalance } from '../utils/blockchain';
+import { useNotification } from '../components/Notification';
 
 const Profile = () => {
-  const { user } = useAuth();
+  const { user, checkAuth } = useAuth();
+  const { account, connect } = useWallet();
+  const { showNotification } = useNotification();
   const navigate = useNavigate();
   const [profileData, setProfileData] = useState(null);
   const [predictions, setPredictions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [walletBalance, setWalletBalance] = useState('0');
   const [filterType, setFilterType] = useState('all'); // 'all', 'free', 'boost', 'market'
   const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'pending', 'won', 'lost', 'settled'
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
+  const [editingUsername, setEditingUsername] = useState(false);
+  const [usernameValue, setUsernameValue] = useState('');
+  const [usernameStatus, setUsernameStatus] = useState(null); // null | 'checking' | 'available' | 'taken' | 'invalid'
+  const [usernameMessage, setUsernameMessage] = useState('');
+  const [savingUsername, setSavingUsername] = useState(false);
+  const usernameCheckTimeoutRef = React.useRef(null);
 
   useEffect(() => {
     if (user) {
       fetchProfileData();
     }
   }, [user]);
+
+  useEffect(() => {
+    const fetchWalletBalance = async () => {
+      if (account) {
+        try {
+          const balance = await getWalletBalance(account);
+          setWalletBalance(balance);
+        } catch (error) {
+          console.error('Error fetching wallet balance:', error);
+        }
+      } else {
+        setWalletBalance('0');
+      }
+    };
+    fetchWalletBalance();
+  }, [account]);
+
+  // Reset to page 1 when filters change (must be before early returns)
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterType, filterStatus]);
 
   const fetchProfileData = async () => {
     try {
@@ -30,6 +65,93 @@ const Profile = () => {
       console.error('Error fetching profile data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const checkUsernameAvailability = useCallback(async (value) => {
+    const trimmed = value.trim();
+    if (trimmed.length < 5) {
+      setUsernameStatus('invalid');
+      setUsernameMessage('Username must be more than 4 characters');
+      return;
+    }
+    if (/\s/.test(value)) {
+      setUsernameStatus('invalid');
+      setUsernameMessage('Username cannot contain spaces');
+      return;
+    }
+    setUsernameStatus('checking');
+    setUsernameMessage('Checking...');
+    try {
+      const { data } = await api.get(`/users/check-username?username=${encodeURIComponent(trimmed)}`);
+      setUsernameStatus(data.available ? 'available' : 'taken');
+      setUsernameMessage(data.available ? 'Available' : (data.message || 'Username already taken'));
+    } catch (err) {
+      setUsernameStatus('invalid');
+      setUsernameMessage(err.response?.data?.message || 'Could not check username');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!editingUsername) return;
+    if (usernameCheckTimeoutRef.current) clearTimeout(usernameCheckTimeoutRef.current);
+    if (!usernameValue.trim()) {
+      setUsernameStatus(null);
+      setUsernameMessage('');
+      return;
+    }
+    usernameCheckTimeoutRef.current = setTimeout(() => {
+      checkUsernameAvailability(usernameValue);
+    }, 400);
+    return () => {
+      if (usernameCheckTimeoutRef.current) clearTimeout(usernameCheckTimeoutRef.current);
+    };
+  }, [editingUsername, usernameValue, checkUsernameAvailability]);
+
+  const startEditUsername = () => {
+    setEditingUsername(true);
+    setUsernameValue(user?.username || '');
+    setUsernameStatus(null);
+    setUsernameMessage('');
+  };
+
+  const cancelEditUsername = () => {
+    setEditingUsername(false);
+    setUsernameValue('');
+    setUsernameStatus(null);
+    setUsernameMessage('');
+  };
+
+  const saveUsername = async () => {
+    const trimmed = usernameValue.trim();
+    if (trimmed.length < 5) {
+      showNotification('Username must be more than 4 characters', 'warning');
+      return;
+    }
+    if (/\s/.test(usernameValue)) {
+      showNotification('Username cannot contain spaces', 'warning');
+      return;
+    }
+    const isUnchanged = trimmed === (user?.username || '');
+    if (!isUnchanged && (usernameStatus === 'taken' || usernameStatus === 'invalid')) {
+      showNotification(usernameMessage || 'Please choose a valid username', 'warning');
+      return;
+    }
+    if (isUnchanged) {
+      cancelEditUsername();
+      return;
+    }
+    setSavingUsername(true);
+    try {
+      await api.patch('/users/profile', { username: trimmed });
+      showNotification('Username updated successfully', 'success');
+      await checkAuth();
+      setProfileData((prev) => prev ? { ...prev, username: trimmed } : null);
+      cancelEditUsername();
+    } catch (err) {
+      showNotification(err.response?.data?.message || 'Failed to update username', 'error');
+    } finally {
+      setSavingUsername(false);
     }
   };
 
@@ -72,6 +194,12 @@ const Profile = () => {
     return true;
   });
 
+  // Pagination for filtered predictions
+  const totalPages = Math.ceil(filteredPredictions.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedPredictions = filteredPredictions.slice(startIndex, endIndex);
+
   const handleRowClick = (prediction) => {
     if (prediction.match) {
       navigate(`/match/${prediction.match._id || prediction.match}/${prediction.type}`);
@@ -107,9 +235,63 @@ const Profile = () => {
               {user.username?.[0]?.toUpperCase() || 'U'}
             </div>
             <div className="flex-1">
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-                {user.username}
-              </h1>
+              {!editingUsername ? (
+                <div className="flex items-center gap-2 mb-2">
+                  <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+                    {user.username}
+                  </h1>
+                  <button
+                    type="button"
+                    onClick={startEditUsername}
+                    className="p-1.5 rounded-lg text-gray-500 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-gray-400 dark:hover:text-blue-400 transition-colors"
+                    title="Edit username"
+                    aria-label="Edit username"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                  </button>
+                </div>
+              ) : (
+                <div className="mb-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <input
+                      type="text"
+                      value={usernameValue}
+                      onChange={(e) => setUsernameValue(e.target.value)}
+                      placeholder="Username (5+ characters, no spaces)"
+                      className="flex-1 min-w-[200px] px-3 py-2 border rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      autoFocus
+                      maxLength={30}
+                    />
+                    <button
+                      type="button"
+                      onClick={saveUsername}
+                      disabled={savingUsername || (usernameValue.trim() !== (user?.username || '') && usernameStatus !== 'available')}
+                      className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {savingUsername ? 'Saving...' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEditUsername}
+                      disabled={savingUsername}
+                      className="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-500 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {usernameMessage && (
+                    <p className={`mt-1 text-sm ${
+                      usernameStatus === 'available' ? 'text-green-600 dark:text-green-400' :
+                      usernameStatus === 'taken' || usernameStatus === 'invalid' ? 'text-red-600 dark:text-red-400' :
+                      'text-gray-500 dark:text-gray-400'
+                    }`}>
+                      {usernameMessage}
+                    </p>
+                  )}
+                </div>
+              )}
               {user.email && (
                 <p className="text-gray-600 dark:text-gray-400 mb-2">{user.email}</p>
               )}
@@ -124,6 +306,26 @@ const Profile = () => {
                 {stats.points} Points
               </div>
               <div className="text-sm text-gray-600 dark:text-gray-400">Total Points</div>
+              {account ? (
+                <div className="mt-2">
+                  <div className="text-lg font-semibold text-green-600 dark:text-green-400">
+                    {parseFloat(walletBalance).toFixed(4)} ETH
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-500">Wallet Balance</div>
+                </div>
+              ) : (
+                <div className="mt-2">
+                  <button
+                    onClick={connect}
+                    className="px-3 py-1 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+                  >
+                    Connect Wallet
+                  </button>
+                  <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+                    Connect to view balance
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -209,12 +411,12 @@ const Profile = () => {
                 <span className="text-gray-600 dark:text-gray-400">Total</span>
                 <span className="font-semibold text-gray-900 dark:text-white">{marketPredictions.length}</span>
               </div>
-              <div className="flex justify-between">
+              {/* <div className="flex justify-between">
                 <span className="text-gray-600 dark:text-gray-400">Total Volume</span>
                 <span className="font-semibold text-gray-900 dark:text-white">
                   {marketPredictions.reduce((sum, p) => sum + (p.amount || 0), 0).toFixed(3)} ETH
                 </span>
-              </div>
+              </div> */}
             </div>
           </div>
         </div>
@@ -258,12 +460,13 @@ const Profile = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Match/Poll</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Prediction</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Outcome</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Amount</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Status</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Date</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                  {filteredPredictions.map((prediction) => (
+                  {paginatedPredictions.map((prediction) => (
                     <tr 
                       key={prediction._id}
                       onClick={() => handleRowClick(prediction)}
@@ -289,6 +492,15 @@ const Profile = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
                         {getOutcome(prediction)}
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+                        {prediction.type === 'free' 
+                          ? '0.0000 ETH'
+                          : prediction.type === 'boost'
+                          ? `${(prediction.totalStake || prediction.amount || 0).toFixed(4)} ETH`
+                          : prediction.type === 'market'
+                          ? `${(prediction.totalInvested || 0).toFixed(4)} ETH`
+                          : '0.0000 ETH'}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 rounded-full text-xs ${
                           prediction.status === 'won' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
@@ -312,6 +524,37 @@ const Profile = () => {
               {predictions.length === 0 
                 ? 'No predictions yet. Start predicting to see your history here!'
                 : 'No predictions match the selected filters.'}
+            </div>
+          )}
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="mt-6 flex items-center justify-between">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className={`px-4 py-2 rounded-lg font-medium ${
+                  currentPage === 1
+                    ? 'bg-gray-300 dark:bg-gray-700 text-gray-500 cursor-not-allowed'
+                    : 'bg-blue-500 text-white hover:bg-blue-600'
+                }`}
+              >
+                Previous
+              </button>
+              <span className="text-gray-600 dark:text-gray-400">
+                Page {currentPage} of {totalPages} ({filteredPredictions.length} total)
+              </span>
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className={`px-4 py-2 rounded-lg font-medium ${
+                  currentPage === totalPages
+                    ? 'bg-gray-300 dark:bg-gray-700 text-gray-500 cursor-not-allowed'
+                    : 'bg-blue-500 text-white hover:bg-blue-600'
+                }`}
+              >
+                Next
+              </button>
             </div>
           )}
         </div>

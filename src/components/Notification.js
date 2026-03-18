@@ -13,8 +13,9 @@ export const useNotification = () => {
 export const NotificationProvider = ({ children }) => {
   const [notifications, setNotifications] = useState([]);
 
+  const notificationIdRef = React.useRef(0);
   const showNotification = useCallback((message, type = 'info', duration = 3000) => {
-    const id = Date.now();
+    const id = `${Date.now()}-${++notificationIdRef.current}`;
     const notification = { id, message, type };
     
     setNotifications((prev) => [...prev, notification]);

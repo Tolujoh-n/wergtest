@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { NotificationProvider } from './components/Notification';
+import { WalletProvider } from './context/WalletContext';
 import Navbar from './components/Navbar';
 import CupPage from './pages/CupPage';
 import MatchDetail from './pages/MatchDetail';
@@ -30,8 +31,9 @@ const ScrollToTop = () => {
 function App() {
   return (
     <AuthProvider>
-      <NotificationProvider>
-        <Router>
+      <WalletProvider>
+        <NotificationProvider>
+          <Router>
           <ScrollToTop />
           <div className="App min-h-screen bg-gray-50 dark:bg-gray-900">
             <Navbar />
@@ -53,7 +55,8 @@ function App() {
             <Footer />
           </div>
         </Router>
-      </NotificationProvider>
+        </NotificationProvider>
+      </WalletProvider>
     </AuthProvider>
   );
 }

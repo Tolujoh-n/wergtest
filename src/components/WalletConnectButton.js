@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { initOnboard } from '../utils/web3onboard';
 import { useAuth } from '../context/AuthContext';
 
-const WalletConnectButton = ({ onSuccess }) => {
+const WalletConnectButton = ({ onSuccess, onConnectClick }) => {
   const [loading, setLoading] = useState(false);
   const { loginWithWallet } = useAuth();
   const [onboard, setOnboard] = useState(null);
@@ -30,7 +30,8 @@ const WalletConnectButton = ({ onSuccess }) => {
 
   const connectWallet = async () => {
     if (!onboard) return;
-    
+    if (onConnectClick) onConnectClick();
+    await new Promise((r) => requestAnimationFrame(r));
     setLoading(true);
     try {
       const wallets = await onboard.connectWallet();

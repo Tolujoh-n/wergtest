@@ -38,6 +38,7 @@ export const AuthProvider = ({ children }) => {
     const response = await api.post('/auth/login', { email, password });
     localStorage.setItem('token', response.data.token);
     setUser(response.data.user);
+    window.location.reload();
     return response.data;
   };
 
@@ -45,6 +46,7 @@ export const AuthProvider = ({ children }) => {
     const response = await api.post('/auth/signup', { email, password, username });
     localStorage.setItem('token', response.data.token);
     setUser(response.data.user);
+    window.location.reload();
     return response.data;
   };
 
@@ -56,6 +58,7 @@ export const AuthProvider = ({ children }) => {
         setUser(response.data.user);
       }
       setWalletAddress(address);
+      window.location.reload();
       return response.data;
     } catch (error) {
       // If user doesn't exist, create account
@@ -63,6 +66,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('token', signupResponse.data.token);
       setUser(signupResponse.data.user);
       setWalletAddress(address);
+      window.location.reload();
       return signupResponse.data;
     }
   };
@@ -71,6 +75,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('token');
     setUser(null);
     setWalletAddress(null);
+    window.location.href = '/';
   };
 
   const value = {

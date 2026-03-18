@@ -242,10 +242,23 @@ const MatchCard = ({ match }) => {
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 hover:shadow-lg transition-shadow">
       <div className="flex items-center justify-between mb-3">
-        <div>
-          <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-            {match.teamA} vs {match.teamB}
-          </h3>
+        <div className="flex-1">
+          <div className="flex items-center gap-3 mb-2">
+            {match.teamAImage && (
+              <img src={match.teamAImage} alt={match.teamA} className="w-10 h-10 object-cover rounded-full" />
+            )}
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+              {match.teamA}
+            </h3>
+          </div>
+          <div className="flex items-center gap-3 mb-2">
+            {match.teamBImage && (
+              <img src={match.teamBImage} alt={match.teamB} className="w-10 h-10 object-cover rounded-full" />
+            )}
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+              {match.teamB}
+            </h3>
+          </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             {new Date(match.date).toLocaleDateString()} • {match.stageName || 'Unknown'}
           </p>

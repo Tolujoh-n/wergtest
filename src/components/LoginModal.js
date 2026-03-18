@@ -55,6 +55,7 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              placeholder="Enter your email"
               className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
             />
           </div>
@@ -68,6 +69,7 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              placeholder="Enter your password"
               className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
             />
           </div>
@@ -91,7 +93,7 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
         </div>
 
         <div className="mt-4">
-          <WalletConnectButton onSuccess={onClose} />
+          <WalletConnectButton onSuccess={onClose} onConnectClick={onClose} />
         </div>
 
         <div className="mt-4 text-center">

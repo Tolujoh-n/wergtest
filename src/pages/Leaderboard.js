@@ -7,23 +7,38 @@ const Leaderboard = () => {
   const cupSlug = searchParams.get('cup');
   const [leaderboard, setLeaderboard] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all'); // all, free, boost, market
+  const [filter, setFilter] = useState('all'); // all, free, boost
+  const [pagination, setPagination] = useState({
+    currentPage: 1,
+    totalPages: 1,
+    totalUsers: 0,
+    hasNext: false,
+    hasPrev: false
+  });
 
   const fetchLeaderboard = useCallback(async () => {
     setLoading(true);
     try {
+      const page = pagination.currentPage || 1;
       const endpoint = cupSlug 
-        ? `/api/leaderboard/cup/${cupSlug}?type=${filter}`
-        : `/api/leaderboard?type=${filter}`;
+        ? `/leaderboard/cup/${cupSlug}?type=${filter}&page=${page}`
+        : `/leaderboard?type=${filter}&page=${page}`;
       const response = await api.get(endpoint);
-      setLeaderboard(response.data || []);
+      if (response.data.users) {
+        // New paginated response
+        setLeaderboard(response.data.users || []);
+        setPagination(response.data.pagination || pagination);
+      } else {
+        // Legacy response (no pagination)
+        setLeaderboard(response.data || []);
+      }
     } catch (error) {
       console.error('Error fetching leaderboard:', error);
       setLeaderboard([]);
     } finally {
       setLoading(false);
     }
-  }, [cupSlug, filter]);
+  }, [cupSlug, filter, pagination.currentPage]);
 
   useEffect(() => {
     fetchLeaderboard();
@@ -51,10 +66,13 @@ const Leaderboard = () => {
 
         {/* Filters */}
         <div className="mb-6 flex space-x-4">
-          {['all', 'free', 'boost', 'market'].map((f) => (
+          {['all', 'free', 'boost'].map((f) => (
             <button
               key={f}
-              onClick={() => setFilter(f)}
+              onClick={() => {
+                setFilter(f);
+                setPagination({...pagination, currentPage: 1}); // Reset to page 1 when filter changes
+              }}
               className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                 filter === f
                   ? 'bg-blue-500 text-white'
@@ -153,6 +171,43 @@ const Leaderboard = () => {
         {leaderboard.length === 0 && (
           <div className="text-center py-12">
             <p className="text-gray-600 dark:text-gray-400">No leaderboard data available yet.</p>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {pagination.totalPages > 1 && (
+          <div className="mt-6 flex items-center justify-between">
+            <button
+              onClick={() => {
+                const newPage = pagination.currentPage - 1;
+                setPagination({...pagination, currentPage: newPage});
+              }}
+              disabled={!pagination.hasPrev}
+              className={`px-4 py-2 rounded-lg font-medium ${
+                pagination.hasPrev
+                  ? 'bg-blue-500 text-white hover:bg-blue-600'
+                  : 'bg-gray-300 dark:bg-gray-700 text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              Previous
+            </button>
+            <span className="text-gray-600 dark:text-gray-400">
+              Page {pagination.currentPage} of {pagination.totalPages} ({pagination.totalUsers} total)
+            </span>
+            <button
+              onClick={() => {
+                const newPage = pagination.currentPage + 1;
+                setPagination({...pagination, currentPage: newPage});
+              }}
+              disabled={!pagination.hasNext}
+              className={`px-4 py-2 rounded-lg font-medium ${
+                pagination.hasNext
+                  ? 'bg-blue-500 text-white hover:bg-blue-600'
+                  : 'bg-gray-300 dark:bg-gray-700 text-gray-500 cursor-not-allowed'
+              }`}
+            >
+              Next
+            </button>
           </div>
         )}
       </div>
