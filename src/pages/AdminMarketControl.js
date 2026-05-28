@@ -66,6 +66,15 @@ const AdminMarketControl = () => {
     }
   }, [basePath, showNotification]);
 
+  const fetchMmVault = useCallback(async () => {
+    try {
+      const { data } = await api.get('/admin/orderbook/mm-vault');
+      setMmVault(data);
+    } catch {
+      setMmVault(null);
+    }
+  }, []);
+
   useEffect(() => {
     fetchAll();
     fetchMmVault();
@@ -143,15 +152,6 @@ const AdminMarketControl = () => {
       setMmSaving(false);
     }
   };
-
-  const fetchMmVault = useCallback(async () => {
-    try {
-      const { data } = await api.get('/admin/orderbook/mm-vault');
-      setMmVault(data);
-    } catch {
-      setMmVault(null);
-    }
-  }, []);
 
   const fetchBotStats = useCallback(async () => {
     if (!item?.marketId) return;

@@ -674,7 +674,7 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
   const { ensureConnected, isConnecting } = useWallet();
   const { showNotification } = useNotification();
   const [showPredictModal, setShowPredictModal] = useState(false);
-  const [selectedOutcome, setSelectedOutcome] = useState(null);
+  const [selectedOutcome] = useState(null);
   const [freePickerOpen, setFreePickerOpen] = useState(false);
   const [phoneVerifyOpen, setPhoneVerifyOpen] = useState(false);
   const [pendingFreePick, setPendingFreePick] = useState(null);
@@ -779,7 +779,6 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
       (prediction.outcome.trim().toLowerCase() === 'yes' && resolvedOutcome.trim().toUpperCase() === 'YES') ||
       (prediction.outcome.trim().toUpperCase() === 'YES' && resolvedOutcome.trim().toLowerCase() === 'yes')))
   );
-  const canPredict = !locked && !isResolved && (item.status === 'upcoming' || item.status === 'active');
 
   const effectiveFreeJackpotPool =
     freeJackpotStats?.freeJackpotPool ??
@@ -1967,7 +1966,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
   const [booksByOption, setBooksByOption] = useState({}); // { [optionKey]: { YES: {bids,asks}, NO: {bids,asks} } }
   const [tradeType, setTradeType] = useState('buy');
   const [amount, setAmount] = useState('');
-  const [trades, setTrades] = useState([]);
+  const [, setTrades] = useState([]);
   const [comments, setComments] = useState([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [newComment, setNewComment] = useState('');
@@ -1988,7 +1987,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
   const [orderbookPositions, setOrderbookPositions] = useState([]);
   const [orderbookPositionsLoading, setOrderbookPositionsLoading] = useState(false);
   const [settlingOrders, setSettlingOrders] = useState([]);
-  const [restingLiquidityOrders, setRestingLiquidityOrders] = useState([]);
+  const [, setRestingLiquidityOrders] = useState([]);
   const [prices, setPrices] = useState({});
   const [priceAmounts, setPriceAmounts] = useState({}); // ETH amounts for each option
   const [currentItem, setCurrentItem] = useState(item);
@@ -2019,25 +2018,6 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     if (!outcome) return '';
     return formatMarketOrderbookOutcomeLabel(outcome.trim(), itemData, isPoll);
   };
-  
-  // Helper function to normalize outcome to price key (for price lookups)
-  const getPriceKey = useCallback((outcome) => {
-    if (!outcome) return '';
-    const outcomeStr = String(outcome).trim().toLowerCase();
-    if (isPoll) {
-      if (itemData.optionType === 'options' && itemData.options) {
-        const option = itemData.options.find(
-          (opt) => opt && String(opt.text).toLowerCase() === outcomeStr
-        );
-        return option ? option.text : outcome;
-      }
-      return outcomeStr === 'yes' ? 'yes' : outcomeStr === 'no' ? 'no' : outcomeStr;
-    }
-    if (outcomeStr === 'teama') return 'teamA';
-    if (outcomeStr === 'teamb') return 'teamB';
-    if (outcomeStr === 'draw') return 'draw';
-    return outcomeStr;
-  }, [isPoll, itemData.optionType, itemData.options]);
   
   // Calculate winning predictions
   const winningPredictions = Object.values(predictions).filter(pred => 
@@ -2157,18 +2137,6 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
 
   const fetchOrderbookPositions = fetchTradingPanel;
 
-  const refreshItemFromServer = useCallback(async () => {
-    const id = itemData?._id;
-    if (!id) return;
-    try {
-      const itemResponse = isPoll ? await api.get(`/polls/${id}`) : await api.get(`/matches/${id}`);
-      setCurrentItem(itemResponse.data);
-      if (onItemUpdate) onItemUpdate(itemResponse.data);
-    } catch (e) {
-      console.error('Failed to refresh match/poll from server', e);
-    }
-  }, [isPoll, itemData?._id, onItemUpdate]);
-
   useEffect(() => {
     fetchTradingPanel();
   }, [fetchTradingPanel]);
@@ -2231,7 +2199,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       raw[row.key] = Math.max(0.001, Math.min(0.999, p ?? 1 / n));
     }
     return raw;
-  }, [outcomeRows, booksByOption, bookMidPrice, itemData.startingPrices]);
+  }, [outcomeRows, bookMidPrice, itemData.startingPrices]);
 
   const outcomeImpliedPrices = useMemo(() => {
     const sum = Object.values(outcomeImpliedRaw).reduce((a, b) => a + b, 0) || 1;
@@ -2526,7 +2494,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     if (Math.abs(priceSum - 1.0) > 0.01) {
       console.warn('Prices do not sum to 1.0:', priceSum, calculatedPrices);
     }
-  }, [currentItem, item, isPoll, itemData.optionType, itemData.marketTeamALiquidity, itemData.marketTeamBLiquidity, itemData.marketDrawLiquidity, itemData.marketYesLiquidity, itemData.marketNoLiquidity, itemData.options]);
+  }, [currentItem, item, isPoll, itemData.optionType, itemData.drawEnabled, itemData.marketTeamALiquidity, itemData.marketTeamBLiquidity, itemData.marketDrawLiquidity, itemData.marketYesLiquidity, itemData.marketNoLiquidity, itemData.options]);
 
   const fetchMarketData = useCallback(async () => {
     try {
@@ -2612,30 +2580,6 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     ];
     return series;
   }, [isPoll, itemData.optionType, itemData.options, itemData.teamA, itemData.teamB, itemData.drawEnabled]);
-
-  const normalizeTradeOutcomeKey = useCallback(
-    (rawOutcome) => {
-      const o = String(rawOutcome || '').trim();
-      if (!o) return '';
-      if (isPoll) {
-        if (itemData.optionType === 'options' && Array.isArray(itemData.options) && itemData.options.length > 0) {
-          // Option-based poll: trade outcome should be exact option text
-          return o;
-        }
-        const upper = o.toUpperCase();
-        return upper === 'YES' ? 'YES' : upper === 'NO' ? 'NO' : upper;
-      }
-
-      // Match: map TEAMA/TEAMB/DRAW to TeamA/TeamB/Draw
-      const upper = o.toUpperCase();
-      if (upper === 'TEAMA' || upper === 'TEAMA') return 'TeamA';
-      if (upper === 'TEAMB' || upper === 'TEAMB') return 'TeamB';
-      if (upper === 'DRAW') return 'Draw';
-      if (o === 'TeamA' || o === 'TeamB' || o === 'Draw') return o;
-      return o;
-    },
-    [isPoll, itemData.optionType, itemData.options]
-  );
 
   const rebuildChartDisplay = useCallback(() => {
     const series = getOutcomeSeriesConfig();

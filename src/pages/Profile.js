@@ -173,7 +173,7 @@ const Profile = () => {
     clearProfileTradingState();
     fetchProfileData();
     fetchTicketBalances();
-  }, [user?._id, fetchProfileData, fetchTicketBalances, clearProfileTradingState]);
+  }, [user, fetchProfileData, fetchTicketBalances, clearProfileTradingState]);
 
   useEffect(() => {
     if (!user) return;
@@ -188,7 +188,7 @@ const Profile = () => {
       clearInterval(t);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [user?._id, fetchProfileData]);
+  }, [user, fetchProfileData]);
 
   useEffect(() => {
     const fetchBalances = async () => {

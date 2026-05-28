@@ -8,7 +8,6 @@ import {
   batchAddOrderbookLiquidity,
   resolveMarket,
   updateMarketStatus,
-  setContractAddress,
   ensureUsdcAllowance,
   usdcToUnits,
   isOnChainAdmin,
