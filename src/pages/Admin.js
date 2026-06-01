@@ -765,7 +765,7 @@ const Admin = () => {
         {/* Tabs */}
         <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
           <nav className="-mb-px flex space-x-8">
-            {['matches', 'polls', 'cups', 'stages', 'blogs', 'settings'].map((tab) => (
+            {['matches', 'polls', 'cups', 'stages', 'blogs', 'newsletter', 'settings'].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -854,6 +854,7 @@ const Admin = () => {
             onDeleteBlog={handleDeleteBlog}
           />
         )}
+        {activeTab === 'newsletter' && <NewsletterTab />}
         {activeTab === 'settings' && (
           <SettingsTab />
         )}
@@ -3734,6 +3735,217 @@ const shortAddr = (addr) => {
 };
 
 // Settings Tab Component
+const NEWSLETTER_PAGE_SIZE = 50;
+
+const NewsletterTab = () => {
+  const [subscribers, setSubscribers] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const { showNotification } = useNotification();
+
+  const fetchSubscribers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get('/admin/newsletter', {
+        params: {
+          page,
+          limit: NEWSLETTER_PAGE_SIZE,
+          search: search || undefined,
+        },
+      });
+      setSubscribers(data.items || []);
+      setTotal(data.total || 0);
+      setPages(data.pages || 1);
+    } catch (error) {
+      showNotification(error.response?.data?.message || 'Failed to load subscribers', 'error');
+      setSubscribers([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, search, showNotification]);
+
+  useEffect(() => {
+    fetchSubscribers();
+  }, [fetchSubscribers]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
+  const handleSearchSubmit = (e) => {
+    e.preventDefault();
+    setSearch(searchInput.trim());
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const response = await api.get('/admin/newsletter/export', { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `newsletter-subscribers-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      showNotification('Newsletter list exported', 'success');
+    } catch (error) {
+      showNotification(error.response?.data?.message || 'Export failed', 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Remove this subscriber from the list?')) return;
+    setDeletingId(id);
+    try {
+      await api.delete(`/admin/newsletter/${id}`);
+      showNotification('Subscriber removed', 'success');
+      fetchSubscribers();
+    } catch (error) {
+      showNotification(error.response?.data?.message || 'Delete failed', 'error');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Newsletter</h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            {total} subscriber{total === 1 ? '' : 's'} total
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={fetchSubscribers}
+            disabled={loading}
+            className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+          >
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting || total === 0}
+            className="px-4 py-2 text-sm font-semibold rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
+          >
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
+        </div>
+      </div>
+
+      <form onSubmit={handleSearchSubmit} className="mb-4 flex flex-col sm:flex-row gap-2">
+        <input
+          type="search"
+          placeholder="Search by email…"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-white"
+        />
+        <button
+          type="submit"
+          className="px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600"
+        >
+          Search
+        </button>
+        {search && (
+          <button
+            type="button"
+            onClick={() => {
+              setSearchInput('');
+              setSearch('');
+            }}
+            className="px-4 py-2 text-sm font-medium rounded-lg text-gray-600 dark:text-gray-400 hover:underline"
+          >
+            Clear
+          </button>
+        )}
+      </form>
+
+      {loading ? (
+        <div className="text-center py-12 text-gray-500 dark:text-gray-400">Loading subscribers…</div>
+      ) : subscribers.length === 0 ? (
+        <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+          {search ? 'No subscribers match your search.' : 'No newsletter subscribers yet.'}
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-gray-900/50 text-left text-gray-600 dark:text-gray-400">
+              <tr>
+                <th className="py-3 px-4 font-medium">Email</th>
+                <th className="py-3 px-4 font-medium">Source</th>
+                <th className="py-3 px-4 font-medium">Subscribed</th>
+                <th className="py-3 px-4 font-medium w-24">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+              {subscribers.map((sub) => (
+                <tr key={sub._id} className="text-gray-900 dark:text-gray-100">
+                  <td className="py-3 px-4 font-mono text-xs sm:text-sm">{sub.email}</td>
+                  <td className="py-3 px-4 capitalize">{sub.source || '—'}</td>
+                  <td className="py-3 px-4 text-gray-600 dark:text-gray-400">
+                    {sub.subscribedAt
+                      ? new Date(sub.subscribedAt).toLocaleString()
+                      : '—'}
+                  </td>
+                  <td className="py-3 px-4">
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(sub._id)}
+                      disabled={deletingId === sub._id}
+                      className="text-xs font-semibold text-rose-600 dark:text-rose-400 hover:underline disabled:opacity-50"
+                    >
+                      {deletingId === sub._id ? '…' : 'Remove'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {pages > 1 && (
+        <div className="flex items-center justify-between mt-4">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1 || loading}
+            className="px-4 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-gray-600 dark:text-gray-400">
+            Page {page} of {pages}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.min(pages, p + 1))}
+            disabled={page >= pages || loading}
+            className="px-4 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const SettingsTab = () => {
   const [dailyFreeTickets, setDailyFreeTickets] = useState(1);
   const [pointsPerWin, setPointsPerWin] = useState(10);

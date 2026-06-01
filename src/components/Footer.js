@@ -2,8 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../utils/api';
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const Footer = () => {
   const [featuredBlogs, setFeaturedBlogs] = useState([]);
+  const [newsletterEmail, setNewsletterEmail] = useState('');
+  const [newsletterStatus, setNewsletterStatus] = useState(null);
+  const [newsletterLoading, setNewsletterLoading] = useState(false);
   const [socialLinks, setSocialLinks] = useState({
     socialTwitter: '',
     socialFacebook: '',
@@ -64,6 +69,35 @@ const Footer = () => {
       return `https://${trimmed}`;
     }
     return trimmed;
+  };
+
+  const handleNewsletterSubmit = async (e) => {
+    e.preventDefault();
+    const email = newsletterEmail.trim().toLowerCase();
+    if (!email || !EMAIL_RE.test(email)) {
+      setNewsletterStatus({ type: 'error', message: 'Please enter a valid email address.' });
+      return;
+    }
+    setNewsletterLoading(true);
+    setNewsletterStatus(null);
+    try {
+      const { data } = await api.post('/newsletter/subscribe', {
+        email,
+        source: 'footer',
+      });
+      setNewsletterStatus({
+        type: 'success',
+        message: data.message || 'Thanks for subscribing!',
+      });
+      setNewsletterEmail('');
+    } catch (err) {
+      setNewsletterStatus({
+        type: 'error',
+        message: err.response?.data?.message || 'Could not subscribe. Please try again.',
+      });
+    } finally {
+      setNewsletterLoading(false);
+    }
   };
 
   return (
@@ -262,6 +296,50 @@ const Footer = () => {
                     <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
                   </svg>
                 </span>
+              )}
+            </div>
+
+            <div className="mt-6">
+              <p className="text-sm font-medium text-gray-900 dark:text-white mb-2">
+                Newsletter
+              </p>
+              <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
+                Get match updates, jackpots, and platform news in your inbox.
+              </p>
+              <form onSubmit={handleNewsletterSubmit} className="space-y-2">
+                <input
+                  type="email"
+                  name="email"
+                  autoComplete="email"
+                  placeholder="you@example.com"
+                  value={newsletterEmail}
+                  onChange={(e) => {
+                    setNewsletterEmail(e.target.value);
+                    if (newsletterStatus) setNewsletterStatus(null);
+                  }}
+                  disabled={newsletterLoading}
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
+                  aria-label="Email for newsletter"
+                />
+                <button
+                  type="submit"
+                  disabled={newsletterLoading}
+                  className="w-full px-3 py-2 text-sm font-semibold rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {newsletterLoading ? 'Subscribing…' : 'Subscribe'}
+                </button>
+              </form>
+              {newsletterStatus && (
+                <p
+                  className={`mt-2 text-xs ${
+                    newsletterStatus.type === 'success'
+                      ? 'text-green-600 dark:text-green-400'
+                      : 'text-red-600 dark:text-red-400'
+                  }`}
+                  role="status"
+                >
+                  {newsletterStatus.message}
+                </p>
               )}
             </div>
           </div>
