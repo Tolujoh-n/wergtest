@@ -19,7 +19,7 @@ const ITEMS_PER_PAGE = 20;
 
 export default function WalletPage() {
   const { account, connect, ensureConnected, isBaseSepolia } = useWallet();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const { showNotification } = useNotification();
 
   const [ethBalance, setEthBalance] = useState('0');
@@ -63,11 +63,13 @@ export default function WalletPage() {
   const ensureWalletLinked = async () => {
     if (!user || !account) return false;
     try {
-      const { data } = await api.get('/auth/me');
-      const wallets = Array.isArray(data?.user?.wallets) ? data.user.wallets : [];
+      const { data: meData } = await api.get('/auth/me');
+      const wallets = Array.isArray(meData?.user?.wallets) ? meData.user.wallets : [];
       const linked = wallets.some((w) => String(w).toLowerCase() === String(account).toLowerCase());
       if (linked) return true;
-      await api.post('/auth/wallets/link', { address: account });
+      const { data: linkData } = await api.post('/auth/wallets/link', { address: account });
+      if (linkData?.user) refreshUser(linkData.user);
+      else await refreshUser();
       return true;
     } catch (e) {
       showNotification(e.response?.data?.message || 'Link this wallet to your account first', 'warning');

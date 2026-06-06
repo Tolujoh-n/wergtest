@@ -20,6 +20,7 @@ import WalletPage from './pages/Wallet';
 import Blogs from './pages/Blogs';
 import BlogDetail from './pages/BlogDetail';
 import Footer from './components/Footer';
+import WalletAccountSync from './components/WalletAccountSync';
 import './App.css';
 import { syncChainConfigFromServer } from './utils/syncChainConfig';
 
@@ -49,6 +50,7 @@ function App() {
         <NotificationProvider>
           <Router>
           <ScrollToTop />
+          <WalletAccountSync />
           <div className="App min-h-screen bg-gray-50 dark:bg-gray-900">
             <Navbar />
             <Routes>

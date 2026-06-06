@@ -18,6 +18,7 @@ import {
   getTreasurySnapshot,
   fundClaimPredictionWinsPool,
   withdrawFromClaimPredictionWinsPool,
+  migrateAllFundsForUpgrade,
   ensureWalletConnected,
   getClaimAuthSigner,
   setClaimAuthSigner,
@@ -36,6 +37,10 @@ const SuperAdmin = () => {
   });
   const [contractBalance, setContractBalance] = useState('');
   const [treasuryUnallocated, setTreasuryUnallocated] = useState('');
+  const [treasuryVaultLiabilities, setTreasuryVaultLiabilities] = useState('');
+  const [treasuryMaxRoutineTransfer, setTreasuryMaxRoutineTransfer] = useState('');
+  const [migrationTo, setMigrationTo] = useState('');
+  const [migrationLoading, setMigrationLoading] = useState(false);
   const [jackpotPoolBalance, setJackpotPoolBalance] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
   const [transferTo, setTransferTo] = useState('');
@@ -277,11 +282,17 @@ const SuperAdmin = () => {
         const total = parseFloat(snap.usdcBalance) || 0;
         const claim = parseFloat(snap.claimPoolBalance) || 0;
         const jack = parseFloat(snap.jackpotPoolBalance) || 0;
-        const unalloc = Math.max(0, total - claim - jack);
+        const vault = parseFloat(snap.tradingVaultLiabilities) || 0;
+        const maxRoutine = parseFloat(snap.maxRoutineTransfer) || 0;
+        const unalloc = Math.max(0, total - claim - jack - vault);
         setTreasuryUnallocated(Number.isFinite(unalloc) ? unalloc.toFixed(6) : '');
+        setTreasuryVaultLiabilities(Number.isFinite(vault) ? vault.toFixed(6) : '');
+        setTreasuryMaxRoutineTransfer(Number.isFinite(maxRoutine) ? maxRoutine.toFixed(6) : '');
       } catch (treasuryErr) {
         console.error('Error getting treasury snapshot:', treasuryErr);
         setTreasuryUnallocated('');
+        setTreasuryVaultLiabilities('');
+        setTreasuryMaxRoutineTransfer('');
       }
 
       // Also get jackpot pool balance
@@ -312,6 +323,19 @@ const SuperAdmin = () => {
       showNotification(switchErr?.message || 'Please switch to Base Sepolia in your wallet', 'error');
       return;
     }
+    const amount = parseFloat(transferAmount);
+    const maxRoutine = parseFloat(treasuryMaxRoutineTransfer);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showNotification('Enter a valid transfer amount', 'warning');
+      return;
+    }
+    if (Number.isFinite(maxRoutine) && amount > maxRoutine + 1e-9) {
+      showNotification(
+        `Amount exceeds routine transfer limit (${treasuryMaxRoutineTransfer || '0'} USDC). Use "Migrate all funds" for a full upgrade drain.`,
+        'warning'
+      );
+      return;
+    }
     try {
       // Transfer on blockchain first
       const txHash = await transferFundsOnChain(transferTo, parseFloat(transferAmount));
@@ -338,7 +362,43 @@ const SuperAdmin = () => {
       showModalMessage('Error', error.message || 'Transfer failed', 'error');
     }
   };
-  
+
+  const handleMigrateAllFunds = async () => {
+    const to = migrationTo.trim();
+    if (!to) {
+      showNotification('Enter migration recipient address', 'warning');
+      return;
+    }
+    if (!window.confirm(
+      'This withdraws ALL USDC from the contract and resets pool accounting. Only use when upgrading to a new contract. Users must use the new deployment afterward. Continue?'
+    )) {
+      return;
+    }
+    try {
+      await ensureWalletConnected();
+    } catch (switchErr) {
+      showNotification(switchErr?.message || 'Please switch to Base Sepolia in your wallet', 'error');
+      return;
+    }
+    setMigrationLoading(true);
+    try {
+      const txHash = await migrateAllFundsForUpgrade(to);
+      showNotification(`Migration withdraw complete! TX: ${txHash.slice(0, 10)}…`, 'success');
+      await logTx({
+        action: 'migrate_all_funds_for_upgrade',
+        txHash,
+        meta: { to },
+      });
+      setMigrationTo('');
+      await handleGetBalance();
+    } catch (error) {
+      console.error('Migration withdraw failed:', error);
+      showModalMessage('Error', error.message || 'Migration withdraw failed', 'error');
+    } finally {
+      setMigrationLoading(false);
+    }
+  };
+
   const handleFundJackpotPool = async () => {
     // Wallet will auto-connect when blockchain function is called
     
@@ -919,7 +979,17 @@ const SuperAdmin = () => {
                 </p>
                 {treasuryUnallocated !== '' && (
                   <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Unallocated (not in claim/jackpot pools): {treasuryUnallocated} USDC
+                    Surplus above pools &amp; vault liabilities: {treasuryUnallocated} USDC
+                  </p>
+                )}
+                {treasuryVaultLiabilities !== '' && (
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    User trading vault liabilities (on-chain): {treasuryVaultLiabilities} USDC
+                  </p>
+                )}
+                {treasuryMaxRoutineTransfer !== '' && (
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Max routine transfer (transferFunds): {treasuryMaxRoutineTransfer} USDC
                   </p>
                 )}
                 <button
@@ -950,8 +1020,12 @@ const SuperAdmin = () => {
 
             <div>
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
-                Transfer Funds
+                Transfer Funds (routine surplus)
               </h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                Moves surplus USDC only — cannot drain claim pool, jackpot pool, or user vault backing.
+                Deployer and superAdmin can call this on-chain. For a full upgrade drain, use the section below.
+              </p>
               <div className="space-y-4">
                 <input
                   type="text"
@@ -975,6 +1049,32 @@ const SuperAdmin = () => {
                   Transfer
                 </button>
               </div>
+            </div>
+
+            <div className="border border-rose-200 dark:border-rose-900/60 rounded-lg p-4 space-y-4 bg-rose-50/50 dark:bg-rose-950/20">
+              <h2 className="text-2xl font-bold text-rose-900 dark:text-rose-200">
+                Migrate all funds (contract upgrade)
+              </h2>
+              <p className="text-sm text-rose-900/90 dark:text-rose-100/90">
+                Withdraws <strong>100% of USDC</strong> to your wallet when replacing this contract.
+                Resets claim pool, jackpot pool, and vault liability counters on-chain. Pause the platform first;
+                redeploy a new WeRgame, update <code className="text-xs">CONTRACT_ADDRESS</code>, then migrate users.
+              </p>
+              <input
+                type="text"
+                value={migrationTo}
+                onChange={(e) => setMigrationTo(e.target.value)}
+                placeholder="Recipient address (e.g. deployer multisig)"
+                className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+              />
+              <button
+                type="button"
+                onClick={handleMigrateAllFunds}
+                disabled={!account || migrationLoading}
+                className="px-4 py-2 bg-rose-600 text-white rounded-lg hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {migrationLoading ? 'Migrating…' : 'Migrate all USDC for upgrade'}
+              </button>
             </div>
 
             <div>

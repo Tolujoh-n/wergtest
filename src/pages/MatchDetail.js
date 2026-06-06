@@ -32,7 +32,8 @@ import Modal from '../components/Modal';
 import FreePredictionModal from '../components/FreePredictionModal';
 import PhoneVerificationModal from '../components/PhoneVerificationModal';
 import NftHolderBonusesSection from '../components/NftHolderBonusesSection';
-import { loadFreeTicketDataPhased } from '../utils/freeTicketLoad';
+import { useFreeTicketData } from '../hooks/useFreeTicketData';
+import TicketBalanceCards from '../components/TicketBalanceCards';
 import WalletInUseModal from '../components/WalletInUseModal';
 import OrderbookTradePanel from '../components/OrderbookTradePanel';
 import { formatUsdAmount } from '../utils/money';
@@ -682,10 +683,14 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
   const [freePickerOutcomeImage, setFreePickerOutcomeImage] = useState(null);
   const [freePredictLoading, setFreePredictLoading] = useState(false);
   const [freeJackpotStats, setFreeJackpotStats] = useState(null);
-  const [freeTicketBalances, setFreeTicketBalances] = useState(null);
-  const [freeNftBonuses, setFreeNftBonuses] = useState([]);
-  const [freeTicketsVerifying, setFreeTicketsVerifying] = useState(false);
   const [linkingFreeWallet, setLinkingFreeWallet] = useState(false);
+  const {
+    balances: freeTicketBalances,
+    nftBonuses: freeNftBonuses,
+    verifying: freeTicketsVerifying,
+    balancesLoading: freeTicketsLoading,
+    reload: reloadFreeTicketData,
+  } = useFreeTicketData(user, account);
   const minTickets = Math.max(1, parseInt(item.minFreeTickets, 10) || 1);
 
   const fetchFreeJackpotStats = useCallback(async () => {
@@ -706,29 +711,6 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
     fetchFreeJackpotStats();
   }, [fetchFreeJackpotStats, item?.freeJackpotPool]);
 
-  const loadFreeTicketData = useCallback(async () => {
-    if (!user) {
-      setFreeTicketBalances(null);
-      setFreeNftBonuses([]);
-      setFreeTicketsVerifying(false);
-      return;
-    }
-    setFreeTicketsVerifying(true);
-    await loadFreeTicketDataPhased({
-      user,
-      account,
-      onPhase: ({ nftBonuses, balances, verifying }) => {
-        setFreeNftBonuses(nftBonuses);
-        if (balances !== undefined) setFreeTicketBalances(balances);
-        setFreeTicketsVerifying(verifying);
-      },
-    });
-  }, [user, account]);
-
-  useEffect(() => {
-    loadFreeTicketData();
-  }, [loadFreeTicketData]);
-
   const handleFreeConnectWallet = async () => {
     if (!user) {
       showNotification('Please log in first', 'warning');
@@ -740,7 +722,7 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
       if (!addr) return;
       await api.post('/auth/wallets/link', { address: addr });
       showNotification('Wallet linked — verifying NFT/FT holdings on-chain…', 'success');
-      await loadFreeTicketData();
+      await reloadFreeTicketData();
     } catch (e) {
       showNotification(e.response?.data?.message || e.message || 'Could not connect wallet', 'error');
     } finally {
@@ -849,7 +831,7 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
     setFreePredictLoading(true);
     try {
       await onPredict(freePickerOutcome, stake);
-      await fetchFreeJackpotStats();
+      await Promise.all([fetchFreeJackpotStats(), reloadFreeTicketData()]);
       setFreePickerOpen(false);
       setShowPredictModal(false);
     } finally {
@@ -995,31 +977,12 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
                   Verify your mobile number once to place free predictions (SMS code).
                 </p>
               )}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
-                <div className="rounded-lg border border-slate-200 dark:border-slate-600 p-3 bg-white dark:bg-gray-800">
-                  <div className="text-xs text-slate-500">Daily tickets</div>
-                  <div className="font-bold text-lg tabular-nums">
-                    {freeTicketBalances == null ? '…' : freeTicketBalances.normalTickets ?? 0}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-amber-200 dark:border-amber-800 p-3 bg-amber-50/50 dark:bg-amber-950/20">
-                  <div className="text-xs text-slate-500">Golden</div>
-                  <div className="font-bold text-lg tabular-nums text-amber-800 dark:text-amber-200">
-                    {freeTicketBalances == null ? '…' : freeTicketBalances.goldenTickets ?? 0}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 p-3 bg-emerald-50/50 dark:bg-emerald-950/20">
-                  <div className="text-xs text-slate-500">Total available</div>
-                  <div className="font-bold text-lg tabular-nums text-emerald-800 dark:text-emerald-200">
-                    {freeTicketBalances == null ? '…' : freeTicketBalances.totalSpendable ?? 0}
-                  </div>
-                  {(freeTicketBalances?.nftBonusToday || 0) > 0 && (
-                    <div className="text-[10px] text-emerald-700 dark:text-emerald-400 mt-0.5">
-                      +{freeTicketBalances.nftBonusToday} from NFT/FT holdings
-                    </div>
-                  )}
-                </div>
-              </div>
+              <TicketBalanceCards
+                user={user}
+                balances={freeTicketBalances}
+                loading={freeTicketsLoading}
+                compact
+              />
               <NftHolderBonusesSection
                 nftBonuses={freeNftBonuses}
                 user={user}
@@ -1054,6 +1017,14 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
                   </p>
                   {(() => {
                     const potWin = freePotentialWin(prediction);
+                    if (freeJackpotStats == null && !isResolved) {
+                      return (
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
+                          Potential win:{' '}
+                          <span className="inline-block h-4 w-16 rounded bg-slate-200 dark:bg-slate-600 animate-pulse align-middle" />
+                        </p>
+                      );
+                    }
                     return potWin != null && Number.isFinite(potWin) ? (
                       <p className="font-semibold text-emerald-700 dark:text-emerald-300">
                         Potential win if correct: {formatUsdAmount(potWin)}
@@ -2050,6 +2021,50 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     itemData.drawEnabled,
   ]);
 
+  const fetchAllOptionBooks = useCallback(
+    async (opts = {}) => {
+      const force = opts.force === true;
+      const chainMarketId = itemData?.marketId;
+      if (!chainMarketId || !outcomeRows.length) return;
+      try {
+        const results = await Promise.all(
+          outcomeRows.map(async (row) => {
+            const key = row.key;
+            try {
+              const [yesRes, noRes] = await Promise.all([
+                api.get(`/orderbook/book/${chainMarketId}`, { params: { optionKey: key, side: 'YES' } }),
+                api.get(`/orderbook/book/${chainMarketId}`, { params: { optionKey: key, side: 'NO' } }),
+              ]);
+              return [
+                key,
+                {
+                  YES: yesRes.data || { bids: [], asks: [] },
+                  NO: noRes.data || { bids: [], asks: [] },
+                },
+              ];
+            } catch {
+              return [key, { YES: { bids: [], asks: [] }, NO: { bids: [], asks: [] } }];
+            }
+          })
+        );
+        setBooksByOption((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const [k, v] of results) {
+            const fp = fingerprintBooksPair(v);
+            if (!force && fingerprintBooksPair(prev[k]) === fp) continue;
+            next[k] = v;
+            changed = true;
+          }
+          return changed ? next : prev;
+        });
+      } catch {
+        // ignore
+      }
+    },
+    [itemData?.marketId, outcomeRows]
+  );
+
   const orderbookOptionLabelByKey = useMemo(() => new Map(outcomeRows.map((o) => [o.key, o.label])), [outcomeRows]);
 
   useEffect(() => {
@@ -2344,17 +2359,24 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
         });
         const filled = Number(order?.sizeFilled) || 0;
         const remaining = Number(order?.sizeRemaining) || 0;
+        const status = String(order?.status || '').toLowerCase();
         if (filled <= 1e-9) {
           showNotification('No liquidity to close position right now. Try again shortly.', 'error');
           return;
         }
+        const fullyClosed = remaining <= 1e-6 && filled + 1e-6 >= sz;
         if (remaining > 1e-6) {
           showNotification(
             `Partially closed: ${filled.toFixed(4)} of ${sz.toFixed(4)} shares sold`,
             'warning'
           );
-        } else {
+        } else if (fullyClosed || status === 'filled') {
           showNotification('Position closed at market price', 'success');
+        } else {
+          showNotification(
+            `Sold ${filled.toFixed(4)} shares — refreshing position…`,
+            'success'
+          );
         }
         bumpVaultRefresh();
         window.setTimeout(bumpVaultRefresh, 5000);
@@ -2363,6 +2385,33 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
           fetchMyOrders({ force: true }),
           fetchAllOptionBooks({ force: true }),
         ]);
+        try {
+          const itemResponse = isPoll
+            ? await api.get(`/polls/${itemData._id}`)
+            : await api.get(`/matches/${itemData._id}`);
+          setCurrentItem(itemResponse.data);
+          if (onItemUpdate) onItemUpdate(itemResponse.data);
+        } catch {
+          /* pause flags refresh is best-effort */
+        }
+        if (fullyClosed || status === 'filled') {
+          await new Promise((r) => window.setTimeout(r, 400));
+          const { data: panel } = await api.get('/orderbook/trading-panel/mine', {
+            params: { chainMarketId: itemData.marketId },
+          });
+          const stillOpen = (panel?.positions || []).some(
+            (p) =>
+              String(p.positionKey) === String(positionKey) &&
+              (Number(p.shares) || 0) > 1e-6
+          );
+          if (stillOpen) {
+            showNotification(
+              'Trade filled but position list is updating — please refresh if the row remains.',
+              'warning'
+            );
+          }
+          await fetchOrderbookPositions({ force: true });
+        }
       } catch (e) {
         showNotification(e?.response?.data?.message || e?.message || 'Failed to close position', 'error');
       } finally {
@@ -2376,11 +2425,13 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       ensureLinkedWallet,
       isPoll,
       itemData?._id,
+      itemData?.marketId,
       fetchOrderbookPositions,
       fetchMyOrders,
       fetchAllOptionBooks,
       showNotification,
       bumpVaultRefresh,
+      onItemUpdate,
     ]
   );
 
@@ -3210,50 +3261,6 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       }
     },
     [itemData?.marketId]
-  );
-
-  const fetchAllOptionBooks = useCallback(
-    async (opts = {}) => {
-      const force = opts.force === true;
-      const chainMarketId = itemData?.marketId;
-      if (!chainMarketId || !outcomeRows.length) return;
-      try {
-        const results = await Promise.all(
-          outcomeRows.map(async (row) => {
-            const key = row.key;
-            try {
-              const [yesRes, noRes] = await Promise.all([
-                api.get(`/orderbook/book/${chainMarketId}`, { params: { optionKey: key, side: 'YES' } }),
-                api.get(`/orderbook/book/${chainMarketId}`, { params: { optionKey: key, side: 'NO' } }),
-              ]);
-              return [
-                key,
-                {
-                  YES: yesRes.data || { bids: [], asks: [] },
-                  NO: noRes.data || { bids: [], asks: [] },
-                },
-              ];
-            } catch {
-              return [key, { YES: { bids: [], asks: [] }, NO: { bids: [], asks: [] } }];
-            }
-          })
-        );
-        setBooksByOption((prev) => {
-          let changed = false;
-          const next = { ...prev };
-          for (const [k, v] of results) {
-            const fp = fingerprintBooksPair(v);
-            if (!force && fingerprintBooksPair(prev[k]) === fp) continue;
-            next[k] = v;
-            changed = true;
-          }
-          return changed ? next : prev;
-        });
-      } catch {
-        // ignore
-      }
-    },
-    [itemData?.marketId, outcomeRows]
   );
 
   useEffect(() => {
@@ -4542,6 +4549,15 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                         fetchAllOptionBooks({ force: true }),
                         fetchOrderbookActivity(),
                       ]);
+                      try {
+                        const itemResponse = isPoll
+                          ? await api.get(`/polls/${itemData._id}`)
+                          : await api.get(`/matches/${itemData._id}`);
+                        setCurrentItem(itemResponse.data);
+                        if (onItemUpdate) onItemUpdate(itemResponse.data);
+                      } catch {
+                        /* best-effort pause flag refresh */
+                      }
                       if (expandedOption) await fetchOptionBooks(expandedOption);
                     }}
                   />

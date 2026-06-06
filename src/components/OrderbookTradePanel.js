@@ -3,6 +3,7 @@ import api from '../utils/api';
 import { depositTradingVault, getTradingVaultBalance } from '../utils/blockchain';
 import { formatUsdAmount } from '../utils/money';
 import { estimateMarketOrderbookPotentialWin } from '../utils/predictionPayout';
+import { isNewBuysPaused, pauseLabel } from '../utils/orderbookPause';
 
 /** Trim trailing zeros from a decimal string for inputs (no forced .0000). */
 function trimDecimalString(n, maxDp = 12) {
@@ -87,6 +88,9 @@ export default function OrderbookTradePanel({
   const vaultFetchGenRef = useRef(0);
 
   const chainMarketId = itemData?.marketId;
+  const orderbook = itemData?.orderbook || {};
+  const buysPaused = isNewBuysPaused(orderbook, optionKey, side);
+  const pauseNotice = buysPaused ? pauseLabel(orderbook, optionKey, side, { itemData, isPoll }) : null;
 
   const outcomeChoices = useMemo(
     () =>
@@ -466,6 +470,14 @@ export default function OrderbookTradePanel({
       showNotification('Login to trade', 'warning');
       return;
     }
+    if (direction === 'buy' && isNewBuysPaused(itemData?.orderbook, optionKey, side)) {
+      showNotification(
+        pauseLabel(itemData?.orderbook, optionKey, side, { itemData, isPoll }) ||
+          'This side is paused for new buys',
+        'warning'
+      );
+      return;
+    }
     if (orderKind === 'market' && referencePrice == null) {
       showNotification(
         'No resting liquidity on this side of the book yet — use a limit order or wait for the market-maker quotes to appear.',
@@ -631,14 +643,19 @@ export default function OrderbookTradePanel({
             <div className="flex rounded-lg border border-slate-300 dark:border-slate-600 overflow-hidden p-0.5 bg-white dark:bg-slate-800/80">
               <button
                 type="button"
+                title={buysPaused ? pauseNotice || 'New buys paused on this side' : undefined}
                 className={`flex-1 min-h-[40px] text-sm font-semibold rounded-md transition-colors ${
                   direction === 'buy'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50'
+                    ? buysPaused
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'bg-emerald-600 text-white shadow-sm'
+                    : buysPaused
+                      ? 'text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30'
+                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50'
                 }`}
                 onClick={() => setDirection('buy')}
               >
-                Buy
+                {buysPaused ? 'Buy (paused)' : 'Buy'}
               </button>
               <button
                 type="button"
@@ -935,15 +952,29 @@ export default function OrderbookTradePanel({
         </div>
       )}
 
+      {pauseNotice && direction === 'buy' && !locked && (
+        <div className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+          {pauseNotice}
+        </div>
+      )}
+
       <button
         type="button"
-        disabled={submitting || locked}
+        disabled={submitting || locked || (direction === 'buy' && buysPaused)}
         onClick={onPlaceOrder}
         className={`w-full min-h-[44px] py-2.5 rounded-lg text-white text-sm font-semibold disabled:opacity-50 ${
           direction === 'sell' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700'
         }`}
       >
-        {submitting ? 'Submitting…' : locked ? 'Trading locked' : direction === 'sell' ? 'Sell' : 'Buy'}
+        {submitting
+          ? 'Submitting…'
+          : locked
+            ? 'Trading locked'
+            : direction === 'buy' && buysPaused
+              ? 'Buy paused'
+              : direction === 'sell'
+                ? 'Sell'
+                : 'Buy'}
       </button>
     </div>
   );

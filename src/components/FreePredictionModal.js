@@ -1,11 +1,12 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import api from '../utils/api';
 import Modal from './Modal';
 import { useWallet } from '../context/WalletContext';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from './Notification';
-import { loadFreeTicketDataPhased } from '../utils/freeTicketLoad';
+import { useFreeTicketData } from '../hooks/useFreeTicketData';
 import NftHolderBonusesSection from './NftHolderBonusesSection';
+import TicketBalanceCards from './TicketBalanceCards';
 
 function DrawOutcomeAvatar({ className = 'w-10 h-10' }) {
   return (
@@ -50,49 +51,19 @@ export default function FreePredictionModal({
   const { account, ensureConnected, isConnecting } = useWallet();
   const { user } = useAuth();
   const { showNotification } = useNotification();
-  const [balances, setBalances] = useState(null);
-  const [nftBonuses, setNftBonuses] = useState([]);
   const [stake, setStake] = useState(minTickets);
   const [linkingWallet, setLinkingWallet] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const loadGenRef = useRef(0);
-
-  const load = useCallback(async () => {
-    const gen = ++loadGenRef.current;
-    if (!user) {
-      setBalances(null);
-      setNftBonuses([]);
-      setVerifying(false);
-      try {
-        const { data } = await api.get('/tickets/nft-bonuses/config');
-        if (gen === loadGenRef.current) {
-          setNftBonuses(Array.isArray(data?.nftBonuses) ? data.nftBonuses : []);
-        }
-      } catch {
-        if (gen === loadGenRef.current) setNftBonuses([]);
-      }
-      return;
-    }
-
-    setVerifying(true);
-    await loadFreeTicketDataPhased({
-      user,
-      account,
-      onPhase: ({ nftBonuses: rows, balances: bal, verifying: pending }) => {
-        if (gen !== loadGenRef.current) return;
-        setNftBonuses(rows);
-        if (bal !== undefined) setBalances(bal);
-        setVerifying(pending);
-      },
-    });
-  }, [user, account]);
+  const {
+    balances,
+    nftBonuses,
+    verifying,
+    balancesLoading,
+    reload,
+  } = useFreeTicketData(open ? user : null, open ? account : null);
 
   useEffect(() => {
-    if (open) {
-      setStake(minTickets);
-      load();
-    }
-  }, [open, minTickets, load]);
+    if (open) setStake(minTickets);
+  }, [open, minTickets]);
 
   const handleConnectWallet = async () => {
     if (!user) {
@@ -105,7 +76,7 @@ export default function FreePredictionModal({
       if (!addr) return;
       await api.post('/auth/wallets/link', { address: addr });
       showNotification('Wallet linked — verifying holdings on-chain…', 'success');
-      await load();
+      await reload();
     } catch (e) {
       showNotification(e.response?.data?.message || e.message || 'Could not connect wallet', 'error');
     } finally {
@@ -116,7 +87,6 @@ export default function FreePredictionModal({
   const total = balances?.totalSpendable ?? 0;
   const maxStake = Math.max(minTickets, total);
   const nftBonusActive = (balances?.nftBonusToday || 0) > 0;
-  const balancesLoading = user && balances == null;
 
   const dec = () => setStake((s) => Math.max(minTickets, s - 1));
   const inc = () => setStake((s) => Math.min(maxStake, s + 1));
@@ -142,41 +112,7 @@ export default function FreePredictionModal({
 
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Your tickets</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div className="rounded-lg border border-slate-200 dark:border-slate-600 p-3 flex items-center gap-3">
-              <span className="text-2xl shrink-0" aria-hidden>
-                🪙
-              </span>
-              <div>
-                <div className="text-xs text-slate-500">Daily (normal)</div>
-                <div className="font-bold text-lg tabular-nums">
-                  {user ? (balancesLoading ? '…' : balances?.normalTickets ?? 0) : '—'}
-                </div>
-              </div>
-            </div>
-            <div className="rounded-lg border border-amber-300/60 dark:border-amber-700 p-3 flex items-center gap-3 bg-amber-50/50 dark:bg-amber-950/30">
-              <span className="text-2xl shrink-0" aria-hidden>
-                ⭐
-              </span>
-              <div>
-                <div className="text-xs text-slate-500">Golden</div>
-                <div className="font-bold text-lg tabular-nums text-amber-800 dark:text-amber-200">
-                  {user ? (balancesLoading ? '…' : balances?.goldenTickets ?? 0) : '—'}
-                </div>
-              </div>
-            </div>
-            <div className="rounded-lg border border-emerald-300/60 dark:border-emerald-700 p-3 bg-emerald-50/50 dark:bg-emerald-950/30">
-              <div className="text-xs text-slate-500">Total available</div>
-              <div className="font-bold text-lg tabular-nums text-emerald-800 dark:text-emerald-200">
-                {user ? (balancesLoading ? '…' : total) : '—'}
-              </div>
-              {!balancesLoading && nftBonusActive && (
-                <div className="text-[10px] text-emerald-700 dark:text-emerald-400 mt-0.5">
-                  includes +{balances.nftBonusToday} NFT/FT bonus today
-                </div>
-              )}
-            </div>
-          </div>
+          <TicketBalanceCards user={user} balances={balances} loading={balancesLoading} />
         </div>
 
         <NftHolderBonusesSection

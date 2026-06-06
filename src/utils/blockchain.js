@@ -109,7 +109,7 @@ const ERC20_ABI = [
 ];
 
 // Contract address (will be set after deployment)
-let CONTRACT_ADDRESS = process.env.REACT_APP_CONTRACT_ADDRESS || '0xc87E94fFd9C78ABb33ED0aE292E33d728B5CEb9B';
+let CONTRACT_ADDRESS = process.env.REACT_APP_CONTRACT_ADDRESS || '0xa8b6472Ed4C27ce076D6DCF0a781d4B78f334E5d';
 
 export const setContractAddress = (address) => {
   CONTRACT_ADDRESS = address;
@@ -951,18 +951,37 @@ export const getContractBalance = async () => {
   return unitsToUsdc(balance);
 };
 
-/** Total USDC in contract + earmarked claim and jackpot pools. */
+/** Total USDC in contract + earmarked claim, jackpot, and vault liabilities. */
 export const getTreasurySnapshot = async () => {
   const contract = getContractReadOnly();
-  const [usdcBalance, claimPoolBalance, jackpotPoolBalance] = await contract.getTreasurySnapshot();
+  const [usdcBalance, claimPoolBalance, jackpotPoolBalance, tradingVaultLiabilities, maxRoutineTransfer] =
+    await contract.getTreasurySnapshot();
   return {
     usdcBalance: unitsToUsdc(usdcBalance),
     claimPoolBalance: unitsToUsdc(claimPoolBalance),
     jackpotPoolBalance: unitsToUsdc(jackpotPoolBalance),
+    tradingVaultLiabilities: unitsToUsdc(tradingVaultLiabilities),
+    maxRoutineTransfer: unitsToUsdc(maxRoutineTransfer),
   };
 };
 
-// Transfer funds
+/** Withdraw all USDC when migrating to a new contract deployment (deployer / superAdmin only). */
+export const migrateAllFundsForUpgrade = async (toAddress) => {
+  await ensureWalletConnected();
+  if (!toAddress || typeof toAddress !== 'string' || !toAddress.trim()) {
+    throw new Error('Invalid recipient address');
+  }
+  const addr = toAddress.trim();
+  if (!ethers.isAddress(addr)) {
+    throw new Error('Recipient is not a valid Ethereum address');
+  }
+  const contract = await getContract();
+  const tx = await contract.migrateAllFundsForUpgrade(addr);
+  await tx.wait();
+  return tx.hash;
+};
+
+// Transfer funds (surplus only — see getTreasurySnapshot.maxRoutineTransfer)
 export const transferFunds = async (toAddress, amountEth) => {
   const contract = await getContract();
   const amountUnits = usdcToUnits(amountEth);

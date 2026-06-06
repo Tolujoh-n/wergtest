@@ -1,3 +1,24 @@
+/** Resolve internal optionKey (e.g. TeamA, Draw) to the admin-set display name. */
+export function resolveOrderbookOptionLabel(itemData, isPoll, optionKey) {
+  if (!optionKey) return '';
+  const key = String(optionKey).trim();
+  if (!itemData) return key;
+  if (isPoll) {
+    if (itemData.optionType === 'options' && Array.isArray(itemData.options)) {
+      const hit = itemData.options.find((o) => String(o.text || '').trim() === key);
+      if (hit?.text) return hit.text;
+    }
+    const up = key.toUpperCase();
+    if (up === 'YES' || up === 'NO') return up;
+    return key;
+  }
+  const lo = key.toLowerCase();
+  if (key === 'TeamA' || lo === 'teama') return itemData.teamA || 'Team A';
+  if (key === 'TeamB' || lo === 'teamb') return itemData.teamB || 'Team B';
+  if (key === 'Draw' || lo === 'draw') return 'Draw';
+  return key;
+}
+
 /**
  * Human label for market / orderbook outcomes: internal keys like `TeamB|YES`
  * become `${teamBName} · YES` using admin-set match or poll option names.
@@ -25,21 +46,7 @@ export function formatMarketOrderbookOutcomeLabel(rawOutcome, itemData, isPoll) 
   }
   const optionKey = s.slice(0, pipeIdx).trim();
   const tokenSide = s.slice(pipeIdx + 1).trim().toUpperCase();
-  let optLabel = optionKey;
-  if (isPoll) {
-    if (itemData.optionType === 'options' && Array.isArray(itemData.options)) {
-      const hit = itemData.options.find((o) => String(o.text || '').trim() === optionKey);
-      if (hit && hit.text) optLabel = hit.text;
-    } else {
-      const ok = optionKey.toUpperCase();
-      if (ok === 'YES' || ok === 'NO') optLabel = ok;
-    }
-  } else {
-    const lo = optionKey.toLowerCase();
-    if (optionKey === 'TeamA' || lo === 'teama') optLabel = itemData.teamA || 'Team A';
-    else if (optionKey === 'TeamB' || lo === 'teamb') optLabel = itemData.teamB || 'Team B';
-    else if (optionKey === 'Draw' || lo === 'draw') optLabel = 'Draw';
-  }
+  const optLabel = resolveOrderbookOptionLabel(itemData, isPoll, optionKey);
   if (tokenSide === 'YES' || tokenSide === 'NO') return `${optLabel} · ${tokenSide}`;
   return s;
 }

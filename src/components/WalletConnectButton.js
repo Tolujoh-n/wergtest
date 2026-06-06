@@ -9,14 +9,12 @@ const WalletConnectButton = ({ onSuccess, onConnectClick }) => {
   const { connect, account } = useWallet();
 
   useEffect(() => {
-    // If already connected, ensure backend login is synced
-    if (account) {
-      // If user is logged in with email/password, do NOT swap accounts automatically.
-      if (user?.email) {
-        api.post('/auth/wallets/link', { address: account }).then(() => checkAuth()).catch(() => {});
-      } else {
-        loginWithWallet(account).catch(console.error);
-      }
+    if (!account) return;
+    // Logged in: link wallet to this account (do not switch users).
+    if (user) {
+      api.post('/auth/wallets/link', { address: account }).then(() => checkAuth()).catch(() => {});
+    } else {
+      loginWithWallet(account).catch(console.error);
     }
   }, [account, loginWithWallet, user, checkAuth]);
 
@@ -27,8 +25,7 @@ const WalletConnectButton = ({ onSuccess, onConnectClick }) => {
     try {
       const address = await connect();
       if (!address) return;
-      // If user is already logged in with email/password, link wallet to this account.
-      if (user?.email) {
+      if (user) {
         await api.post('/auth/wallets/link', { address });
         await checkAuth();
       } else {

@@ -15,15 +15,19 @@ export default function NftHolderBonusesSection({
 }) {
   const rowStatus = (n) => {
     if (!user) return { key: 'login', label: 'Log in' };
-    if (!account) return { key: 'connect', label: '—' };
-    if (verifying || (n.holds === null && !n.verifiedOnChain)) {
-      return { key: 'checking', label: 'Loading…' };
+    if (!account && !n.verifiedOnChain) {
+      return { key: 'connect', label: 'Connect wallet' };
     }
-    if (n.holds) return { key: 'active', label: 'Active' };
-    if (n.holdsOnConnectedOnly || n.clientHolds) {
-      return { key: 'link', label: 'Held — link wallet' };
+    // Verified row — show final status (no loading flash)
+    if (n.verifiedOnChain || n.holds === true || n.holds === false) {
+      if (n.holds) return { key: 'active', label: 'Active' };
+      if (n.holdsOnConnectedOnly) return { key: 'link', label: 'Held — link wallet' };
+      return { key: 'none', label: 'Not held' };
     }
-    return { key: 'none', label: 'Not held' };
+    // Still waiting on first on-chain check
+    if (verifying) return { key: 'checking', label: 'Checking…' };
+    if (!account) return { key: 'connect', label: 'Connect wallet' };
+    return { key: 'pending', label: '—' };
   };
 
   const statusClass = (key) => {
@@ -114,7 +118,7 @@ export default function NftHolderBonusesSection({
                     </td>
                     <td className="p-2.5 text-center">
                       <span
-                        className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusClass(st.key)}`}
+                        className={`inline-flex min-w-[4.5rem] justify-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusClass(st.key)}`}
                       >
                         {st.label}
                       </span>
