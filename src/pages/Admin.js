@@ -3735,7 +3735,7 @@ const shortAddr = (addr) => {
 };
 
 // Settings Tab Component
-const NEWSLETTER_PAGE_SIZE = 50;
+const NEWSLETTER_PAGE_SIZE = 20;
 
 const NewsletterTab = () => {
   const [subscribers, setSubscribers] = useState([]);

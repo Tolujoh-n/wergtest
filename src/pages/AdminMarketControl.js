@@ -4,6 +4,52 @@ import api from '../utils/api';
 import { useNotification } from '../components/Notification';
 import Modal from '../components/Modal';
 
+function getOutcomeKeys(item, kind) {
+  if (kind === 'poll') {
+    const opts = (item?.options || []).map((o) => String(o?.text || '').trim()).filter(Boolean);
+    if (opts.length) return opts;
+    return ['YES', 'NO'];
+  }
+  const keys = ['TeamA'];
+  if (item?.drawEnabled !== false) keys.push('Draw');
+  keys.push('TeamB');
+  return keys;
+}
+
+function buildPauseByOptionRows(item, kind, control) {
+  const keys = getOutcomeKeys(item, kind);
+  const list = control?.pauseByOption || [];
+  return keys.map((optionKey) => {
+    const row = list.find((r) => String(r.optionKey) === String(optionKey)) || {};
+    return {
+      optionKey,
+      pauseYes: !!row.pauseYes,
+      pauseNo: !!row.pauseNo,
+    };
+  });
+}
+
+function buildStartingPriceRows(item, kind) {
+  const keys = getOutcomeKeys(item, kind);
+  const list = item?.startingPrices || [];
+  return keys.map((optionKey) => {
+    const row = list.find((r) => String(r.optionKey) === String(optionKey)) || {};
+    return {
+      optionKey,
+      yesPrice: Number(row.yesPrice ?? 0.5),
+      noPrice: Number(row.noPrice ?? 0.5),
+    };
+  });
+}
+
+function outcomeLabel(optionKey, item, kind) {
+  if (kind === 'poll') return optionKey;
+  if (optionKey === 'TeamA') return item?.teamA || 'Team A';
+  if (optionKey === 'TeamB') return item?.teamB || 'Team B';
+  if (optionKey === 'Draw') return 'Draw';
+  return optionKey;
+}
+
 /**
  * Per-market admin control: spreads, pauses, risk caps, MM bot status (Polymarket-style operations).
  */
@@ -25,6 +71,9 @@ const AdminMarketControl = () => {
   const [mmTickModalOpen, setMmTickModalOpen] = useState(false);
   const [mmTickLoading, setMmTickLoading] = useState(false);
   const [mmVault, setMmVault] = useState(null);
+  const [pauseByOption, setPauseByOption] = useState([]);
+  const [targetPrices, setTargetPrices] = useState([]);
+  const [botSaving, setBotSaving] = useState(false);
 
   const basePath = kind === 'poll' ? `/admin/orderbook/polls/${id}` : `/admin/orderbook/matches/${id}`;
 
@@ -42,6 +91,9 @@ const AdminMarketControl = () => {
       setMmActor(actorRes.data || null);
       setMmWalletInput(actorRes.data?.walletAddress || '');
       const c = docRes.data.control || {};
+      const docItem = docRes.data.item;
+      setPauseByOption(buildPauseByOptionRows(docItem, kind, c));
+      setTargetPrices(buildStartingPriceRows(docItem, kind));
       setForm({
         spreadBps: c.spreadBps ?? 80,
         minSpreadFloorBps: c.minSpreadFloorBps ?? 20,
@@ -64,7 +116,7 @@ const AdminMarketControl = () => {
     } finally {
       setLoading(false);
     }
-  }, [basePath, showNotification]);
+  }, [basePath, showNotification, kind]);
 
   const fetchMmVault = useCallback(async () => {
     try {
@@ -82,12 +134,61 @@ const AdminMarketControl = () => {
 
   const save = async () => {
     try {
-      await api.put(basePath, form);
+      await api.put(basePath, { ...form, pauseByOption });
       showNotification('Market controls saved', 'success');
       fetchAll();
     } catch (e) {
       showNotification(e.response?.data?.message || e.message, 'error');
     }
+  };
+
+  const saveBotSettings = async () => {
+    setBotSaving(true);
+    try {
+      await api.put(basePath, {
+        ...form,
+        pauseByOption,
+        startingPrices: targetPrices.map((row) => ({
+          optionKey: row.optionKey,
+          yesPrice: Number(row.yesPrice) || 0,
+          noPrice: Number(row.noPrice) || 0,
+        })),
+      });
+      if (item?.marketId) {
+        await api.post(`${basePath}/mm-tick`);
+      }
+      showNotification('Bot settings saved — quotes reconfigured', 'success');
+      await fetchAll();
+      setBotOpen(false);
+    } catch (e) {
+      showNotification(e.response?.data?.message || e.message, 'error');
+    } finally {
+      setBotSaving(false);
+    }
+  };
+
+  const updatePauseByOption = (optionKey, field, checked) => {
+    setPauseByOption((prev) =>
+      prev.map((row) =>
+        row.optionKey === optionKey ? { ...row, [field]: checked } : row
+      )
+    );
+  };
+
+  const updateTargetPrice = (optionKey, field, rawValue) => {
+    const value = Math.max(0.01, Math.min(0.99, parseFloat(rawValue) || 0));
+    setTargetPrices((prev) =>
+      prev.map((row) => {
+        if (row.optionKey !== optionKey) return row;
+        const next = { ...row, [field]: value };
+        if (field === 'yesPrice') {
+          next.noPrice = Math.max(0.01, Math.min(0.99, 1 - value));
+        } else if (field === 'noPrice') {
+          next.yesPrice = Math.max(0.01, Math.min(0.99, 1 - value));
+        }
+        return next;
+      })
+    );
   };
 
   const saveTreasuryCaps = async () => {
@@ -363,6 +464,46 @@ const AdminMarketControl = () => {
             Manual toggles above apply immediately after Save. Risk halts stack on top: the bot updates them from
             Treasury & risk caps; matching uses either kind of pause.
           </p>
+
+          <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">
+              Per-outcome pause
+            </h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+              Pause YES or NO for a specific outcome. Global pauses above still apply to all outcomes.
+            </p>
+            <div className="space-y-3">
+              {pauseByOption.map((row) => (
+                <div
+                  key={row.optionKey}
+                  className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 bg-gray-50 dark:bg-gray-900/40"
+                >
+                  <div className="text-sm font-medium text-gray-900 dark:text-white mb-2">
+                    {outcomeLabel(row.optionKey, item, kind)}
+                    <span className="text-xs text-gray-500 ml-2">({row.optionKey})</span>
+                  </div>
+                  <div className="flex flex-wrap gap-4">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={row.pauseYes}
+                        onChange={(e) => updatePauseByOption(row.optionKey, 'pauseYes', e.target.checked)}
+                      />
+                      Pause YES
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={row.pauseNo}
+                        onChange={(e) => updatePauseByOption(row.optionKey, 'pauseNo', e.target.checked)}
+                      />
+                      Pause NO
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </section>
 
         <section className="bg-white dark:bg-gray-800 rounded-xl shadow p-6 space-y-4">
@@ -488,15 +629,67 @@ const AdminMarketControl = () => {
               <div className="text-xs text-gray-500 mt-3">No book data yet.</div>
             )}
           </div>
+
+          <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">Target prices (bot mid)</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Set the mid prices the market maker works toward (same as starting prices at create). Saving will cancel
+              old bot quotes and repost at these levels, then run an MM tick.
+            </p>
+            <div className="space-y-3">
+              {targetPrices.map((row) => {
+                const sum = (Number(row.yesPrice) || 0) + (Number(row.noPrice) || 0);
+                const sumOk = sum <= 1.0001;
+                return (
+                  <div
+                    key={row.optionKey}
+                    className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 bg-white dark:bg-gray-800"
+                  >
+                    <div className="text-sm font-semibold text-gray-900 dark:text-white mb-2">
+                      {outcomeLabel(row.optionKey, item, kind)}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">YES price</label>
+                        <input
+                          type="number"
+                          min="0.01"
+                          max="0.99"
+                          step="0.01"
+                          className="w-full px-2 py-1.5 rounded border dark:bg-gray-700 dark:text-white text-sm"
+                          value={row.yesPrice}
+                          onChange={(e) => updateTargetPrice(row.optionKey, 'yesPrice', e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">NO price</label>
+                        <input
+                          type="number"
+                          min="0.01"
+                          max="0.99"
+                          step="0.01"
+                          className="w-full px-2 py-1.5 rounded border dark:bg-gray-700 dark:text-white text-sm"
+                          value={row.noPrice}
+                          onChange={(e) => updateTargetPrice(row.optionKey, 'noPrice', e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    {!sumOk && (
+                      <p className="text-xs text-red-600 mt-2">YES + NO must sum to at most 1.00</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           <button
             type="button"
-            onClick={() => {
-              save();
-              setBotOpen(false);
-            }}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm"
+            disabled={botSaving}
+            onClick={saveBotSettings}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
           >
-            Save bot setting
+            {botSaving ? 'Saving & reconfiguring…' : 'Save bot settings'}
           </button>
         </div>
       </Modal>

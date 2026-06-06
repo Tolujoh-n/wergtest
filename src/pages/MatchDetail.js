@@ -2331,7 +2331,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       setClosingPositionKey(String(positionKey || ''));
       try {
         const addr = await ensureLinkedWallet();
-        await api.post('/orderbook/orders', {
+        const { data: order } = await api.post('/orderbook/orders', {
           walletAddress: addr,
           matchId: !isPoll ? String(itemData._id) : undefined,
           pollId: isPoll ? String(itemData._id) : undefined,
@@ -2342,11 +2342,27 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
           size: sz,
           slippageBps: 150,
         });
-        showNotification('Close order submitted', 'success');
+        const filled = Number(order?.sizeFilled) || 0;
+        const remaining = Number(order?.sizeRemaining) || 0;
+        if (filled <= 1e-9) {
+          showNotification('No liquidity to close position right now. Try again shortly.', 'error');
+          return;
+        }
+        if (remaining > 1e-6) {
+          showNotification(
+            `Partially closed: ${filled.toFixed(4)} of ${sz.toFixed(4)} shares sold`,
+            'warning'
+          );
+        } else {
+          showNotification('Position closed at market price', 'success');
+        }
         bumpVaultRefresh();
         window.setTimeout(bumpVaultRefresh, 5000);
-        window.setTimeout(bumpVaultRefresh, 15000);
-        await Promise.all([fetchOrderbookPositions({ force: true }), fetchMyOrders({ force: true })]);
+        await Promise.all([
+          fetchOrderbookPositions({ force: true }),
+          fetchMyOrders({ force: true }),
+          fetchAllOptionBooks({ force: true }),
+        ]);
       } catch (e) {
         showNotification(e?.response?.data?.message || e?.message || 'Failed to close position', 'error');
       } finally {
@@ -2362,6 +2378,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       itemData?._id,
       fetchOrderbookPositions,
       fetchMyOrders,
+      fetchAllOptionBooks,
       showNotification,
       bumpVaultRefresh,
     ]
@@ -3276,13 +3293,24 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       for (const r of positionTableRows) {
         await closeOrderbookPosition(r.positionKey, r.shares);
       }
-      showNotification('Close orders submitted for all positions', 'success');
+      await Promise.all([
+        fetchOrderbookPositions({ force: true }),
+        fetchAllOptionBooks({ force: true }),
+      ]);
     } catch (e) {
       showNotification(e?.response?.data?.message || e?.message || 'Close all failed', 'error');
     } finally {
       setClosingAllPositions(false);
     }
-  }, [positionTableRows, isResolved, locked, closeOrderbookPosition, showNotification]);
+  }, [
+    positionTableRows,
+    isResolved,
+    locked,
+    closeOrderbookPosition,
+    fetchOrderbookPositions,
+    fetchAllOptionBooks,
+    showNotification,
+  ]);
 
   const handleBack = () => {
     if (item.cup && item.cup.slug) {
