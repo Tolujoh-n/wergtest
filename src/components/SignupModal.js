@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import WalletConnectButton from './WalletConnectButton';
 import GoogleSignInButton from './GoogleSignInButton';
+import { useNotification } from './Notification';
 import Modal from './Modal';
 
 const SignupModal = ({ onClose, onSwitchToLogin }) => {
@@ -12,6 +13,7 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { signup } = useAuth();
+  const { showNotification } = useNotification();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -28,12 +30,16 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
     }
 
     setLoading(true);
+    showNotification('Signing up...', 'loading', 15000);
 
     try {
       await signup(email, password, username);
+      showNotification('Sign up successful!', 'success');
       onClose();
     } catch (err) {
-      setError(err.response?.data?.message || 'Signup failed. Please try again.');
+      const message = err.response?.data?.message || 'Signup failed. Please try again.';
+      setError(message);
+      showNotification(message, 'error');
     } finally {
       setLoading(false);
     }
@@ -43,6 +49,24 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
 
   return (
     <Modal isOpen onClose={onClose} title="Sign Up" size="sm">
+      <div className="relative">
+        {loading && (
+          <div
+            className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-[1px]"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <svg className="w-10 h-10 text-blue-500 animate-spin mb-3" fill="none" viewBox="0 0 24 24" aria-hidden>
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              />
+            </svg>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-200">Signing up...</p>
+          </div>
+        )}
       {error && (
         <div className="mb-4 rounded-lg bg-red-100 p-3 text-sm text-red-700 dark:bg-red-900 dark:text-red-200">
           {error}
@@ -123,9 +147,23 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
         <button
           type="submit"
           disabled={loading}
-          className="w-full rounded-lg bg-blue-500 py-2.5 text-white transition-colors hover:bg-blue-600 disabled:opacity-50"
+          className="w-full rounded-lg bg-blue-500 py-2.5 text-white transition-colors hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2"
         >
-          {loading ? 'Signing up...' : 'Sign Up'}
+          {loading ? (
+            <>
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                />
+              </svg>
+              Signing up...
+            </>
+          ) : (
+            'Sign Up'
+          )}
         </button>
       </form>
 
@@ -150,6 +188,7 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
           Login
         </button>
       </p>
+      </div>
     </Modal>
   );
 };

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import WalletConnectButton from './WalletConnectButton';
 import GoogleSignInButton from './GoogleSignInButton';
+import { useNotification } from './Notification';
 import api from '../utils/api';
 
 const LoginModal = ({ onClose, onSwitchToSignup }) => {
@@ -10,6 +11,7 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
+  const { showNotification } = useNotification();
 
   const [view, setView] = useState('login'); // login | reset_request | reset_verify | reset_confirm
   const [resetEmail, setResetEmail] = useState('');
@@ -21,12 +23,16 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+    showNotification('Logging in...', 'loading', 15000);
 
     try {
       await login(identifier, password);
+      showNotification('Login successful!', 'success');
       onClose();
     } catch (err) {
-      setError(err.response?.data?.message || 'Login failed. Please try again.');
+      const message = err.response?.data?.message || 'Login failed. Please try again.';
+      setError(message);
+      showNotification(message, 'error');
     } finally {
       setLoading(false);
     }
@@ -38,8 +44,11 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
     setResetMessage('');
     setLoading(true);
     try {
-      await api.post('/auth/password-reset/request', { email: resetEmail });
-      setResetMessage('If that email exists, we sent a verification code.');
+      const res = await api.post('/auth/password-reset/request', { email: resetEmail });
+      setResetMessage(
+        res.data?.message ||
+          'If that email is registered with a password, we sent a verification code to your inbox.'
+      );
       setView('reset_verify');
     } catch (err) {
       setError(err.response?.data?.message || 'Unable to send reset email. Please try again.');
@@ -91,7 +100,24 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+      <div className="relative bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+        {loading && view === 'login' && (
+          <div
+            className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-[1px]"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <svg className="w-10 h-10 text-blue-500 animate-spin mb-3" fill="none" viewBox="0 0 24 24" aria-hidden>
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              />
+            </svg>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-200">Logging in...</p>
+          </div>
+        )}
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
             {view === 'login' ? 'Login' : 'Reset Password'}
@@ -180,9 +206,23 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors"
+                className="w-full py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
               >
-                {loading ? 'Logging in...' : 'Login'}
+                {loading ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      />
+                    </svg>
+                    Logging in...
+                  </>
+                ) : (
+                  'Login'
+                )}
               </button>
             </form>
 
@@ -214,7 +254,7 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
         ) : view === 'reset_request' ? (
           <form onSubmit={requestReset} className="space-y-4">
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              Enter your email and we’ll send you a verification code.
+              Enter the email you used to sign up. We&apos;ll email you a 6-digit verification code.
             </p>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -249,7 +289,8 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
         ) : view === 'reset_verify' ? (
           <form onSubmit={verifyReset} className="space-y-4">
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              Enter the code sent to <span className="font-medium">{resetEmail}</span>.
+              Enter the 6-digit code sent to{' '}
+              <span className="font-medium">{resetEmail}</span>.
             </p>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
