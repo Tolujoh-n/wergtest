@@ -2,30 +2,19 @@
 import { ethers } from 'ethers';
 import WeRgame from "../abi/WeRgame.json";
 import api from './api';
+import {
+  BASE_CHAIN_PARAMS,
+  BASE_TESTNET_PARAMS,
+  DEFAULT_USDC_ADDRESS,
+} from './chainParams';
 
-// Base Sepolia Testnet configuration
-export const BASE_TESTNET_PARAMS = {
-  chainId: '0x14a34', // 84532 in hex
-  chainName: "Base Sepolia Testnet",
-  nativeCurrency: {
-    name: "ETH",
-    symbol: "ETH",
-    decimals: 18,
-  },
-  rpcUrls: [
-    'https://base-sepolia-rpc.publicnode.com',
-    'https://sepolia.base.org',
-  ],
-  blockExplorerUrls: ["https://sepolia-explorer.base.org"],
-};
+const BASE_CHAIN_NUMERIC_ID = BASE_CHAIN_PARAMS.chainIdDecimal;
 
-const BASE_SEPOLIA_NUMERIC_CHAIN_ID = Number.parseInt(BASE_TESTNET_PARAMS.chainId, 16);
-
-/** Read-only HTTP provider with RPC fallbacks (browser TLS can fail on sepolia.base.org). */
+/** Read-only HTTP provider with RPC fallbacks. */
 function createReadOnlyJsonRpcProvider(urlIndex = 0) {
-  const urls = BASE_TESTNET_PARAMS.rpcUrls;
+  const urls = BASE_CHAIN_PARAMS.rpcUrls;
   const url = urls[urlIndex % urls.length];
-  return new ethers.JsonRpcProvider(url, BASE_SEPOLIA_NUMERIC_CHAIN_ID, { staticNetwork: true });
+  return new ethers.JsonRpcProvider(url, BASE_CHAIN_NUMERIC_ID, { staticNetwork: true });
 }
 
 async function readUsdcViaBackend(owner, spender) {
@@ -38,19 +27,21 @@ async function readUsdcViaBackend(owner, spender) {
   return { balance: data.balanceWei, allowance: data.allowanceWei };
 }
 
-/** USDC view calls via public Base Sepolia RPC (MetaMask eth_call often fails with -32603). */
+/** USDC view calls via public Base RPC (MetaMask eth_call often fails with -32603). */
 function getUsdcReadContract(tokenAddress) {
   const tokenAddr = ethers.getAddress(tokenAddress);
   const provider = createReadOnlyJsonRpcProvider();
   return new ethers.Contract(tokenAddr, ERC20_ABI, provider);
 }
 
-async function assertWalletOnBaseSepolia() {
+export { BASE_CHAIN_PARAMS, BASE_TESTNET_PARAMS } from './chainParams';
+
+async function assertWalletOnBaseChain() {
   if (typeof window.ethereum === 'undefined') return;
   const chainId = await window.ethereum.request({ method: 'eth_chainId' });
-  if (chainId !== BASE_TESTNET_PARAMS.chainId) {
+  if (chainId !== BASE_CHAIN_PARAMS.chainId) {
     throw new Error(
-      `Wrong network in MetaMask (chain ${chainId}). Switch to Base Sepolia (${BASE_TESTNET_PARAMS.chainId} / chain id ${BASE_SEPOLIA_NUMERIC_CHAIN_ID}).`
+      `Wrong network in MetaMask (chain ${chainId}). Switch to ${BASE_CHAIN_PARAMS.chainName} (${BASE_CHAIN_PARAMS.chainId} / chain id ${BASE_CHAIN_NUMERIC_ID}).`
     );
   }
 }
@@ -66,7 +57,7 @@ async function readUsdcBalanceAndAllowance(tokenAddress, owner, spender) {
   }
 
   let lastErr = null;
-  for (let i = 0; i < BASE_TESTNET_PARAMS.rpcUrls.length; i++) {
+  for (let i = 0; i < BASE_CHAIN_PARAMS.rpcUrls.length; i++) {
     try {
       const usdc = new ethers.Contract(
         ethers.getAddress(tokenAddress),
@@ -84,7 +75,7 @@ async function readUsdcBalanceAndAllowance(tokenAddress, owner, spender) {
   }
 
   throw new Error(
-    `Could not read USDC on Base Sepolia (browser RPC failed). Is the backend running? ` +
+    `Could not read USDC on ${BASE_CHAIN_PARAMS.chainName} (browser RPC failed). Is the backend running? ` +
       `(${lastErr?.shortMessage || lastErr?.message || lastErr})`
   );
 }
@@ -94,7 +85,7 @@ export const WERGAME_ABI = WeRgame.abi;
 
 // USDC (Base) configuration (token used by the contract)
 export const USDC_DECIMALS = Number(process.env.REACT_APP_USDC_DECIMALS || 6);
-let USDC_ADDRESS = process.env.REACT_APP_USDC_ADDRESS || '';
+let USDC_ADDRESS = DEFAULT_USDC_ADDRESS;
 
 export const getUsdcAddress = () => USDC_ADDRESS;
 export const setUsdcAddress = (address) => {
@@ -109,7 +100,7 @@ const ERC20_ABI = [
 ];
 
 // Contract address (will be set after deployment)
-let CONTRACT_ADDRESS = process.env.REACT_APP_CONTRACT_ADDRESS || '0xa8b6472Ed4C27ce076D6DCF0a781d4B78f334E5d';
+let CONTRACT_ADDRESS = process.env.REACT_APP_CONTRACT_ADDRESS || '';
 
 export const setContractAddress = (address) => {
   CONTRACT_ADDRESS = address;
@@ -129,7 +120,7 @@ export const isWalletConnected = async () => {
 };
 
 /**
- * Connect wallet and switch to Base Sepolia
+ * Connect wallet and switch to Base
  */
 export const connectWallet = async () => {
   if (typeof window.ethereum === 'undefined') {
@@ -143,19 +134,19 @@ export const connectWallet = async () => {
     // Check current chain
     const chainId = await window.ethereum.request({ method: 'eth_chainId' });
     
-    // Switch to Base Sepolia if not already on it
-    if (chainId !== BASE_TESTNET_PARAMS.chainId) {
+    // Switch to Base if not already on it
+    if (chainId !== BASE_CHAIN_PARAMS.chainId) {
       try {
         await window.ethereum.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: BASE_TESTNET_PARAMS.chainId }],
+          params: [{ chainId: BASE_CHAIN_PARAMS.chainId }],
         });
       } catch (switchError) {
         // If chain doesn't exist, add it
         if (switchError.code === 4902) {
           await window.ethereum.request({
             method: 'wallet_addEthereumChain',
-            params: [BASE_TESTNET_PARAMS],
+            params: [BASE_CHAIN_PARAMS],
           });
         } else {
           throw switchError;
@@ -201,18 +192,18 @@ export const ensureWalletConnected = async () => {
   } else {
     // Ensure we're on the correct network
     const chainId = await window.ethereum.request({ method: 'eth_chainId' });
-    if (chainId !== BASE_TESTNET_PARAMS.chainId) {
+    if (chainId !== BASE_CHAIN_PARAMS.chainId) {
       try {
         await window.ethereum.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: BASE_TESTNET_PARAMS.chainId }],
+          params: [{ chainId: BASE_CHAIN_PARAMS.chainId }],
         });
       } catch (switchError) {
         // If chain doesn't exist, add it
         if (switchError.code === 4902) {
           await window.ethereum.request({
             method: 'wallet_addEthereumChain',
-            params: [BASE_TESTNET_PARAMS],
+            params: [BASE_CHAIN_PARAMS],
           });
         } else {
           throw switchError;
@@ -338,7 +329,7 @@ export async function assertUsdcMatchesContract() {
       );
     }
     if (data && (!data.wergHasCode || !data.usdcHasCode)) {
-      throw new Error('WeRgame or MockUSDC has no contract code on chain — wrong network or address.');
+      throw new Error('WeRgame or USDC has no contract code on chain — wrong network or address.');
     }
   } catch (e) {
     if (e?.response?.status) throw e;
@@ -352,7 +343,7 @@ export async function assertUsdcMatchesContract() {
   if (a !== b) {
     throw new Error(
       `USDC token mismatch: WeRgame contract uses ${a} but REACT_APP_USDC_ADDRESS is ${b}. ` +
-        'Update frontend/.env, restart npm start, and confirm you redeployed with the correct MockUSDC.'
+        'Update frontend/.env, restart npm start, and confirm USDC_ADDRESS matches the token wired in WeRgame at deploy.'
     );
   }
 }
@@ -378,7 +369,7 @@ export async function ensureUsdcAllowance(requiredUnits) {
   }
 
   await assertUsdcMatchesContract();
-  await assertWalletOnBaseSepolia();
+  await assertWalletOnBaseChain();
 
   const provider = new ethers.BrowserProvider(window.ethereum);
   const signer = await provider.getSigner();
@@ -394,7 +385,7 @@ export async function ensureUsdcAllowance(requiredUnits) {
   if (balanceBn < req) {
     throw new Error(
       `Insufficient USDC balance. Need at least ${unitsToUsdc(req)} USDC; you have ${unitsToUsdc(balanceBn)}. ` +
-        'Mint MockUSDC to your wallet on Base Sepolia (see smart-contract README).'
+        'Fund your wallet with USDC on Base (bridge from Ethereum or buy on an exchange).'
     );
   }
 
@@ -425,7 +416,7 @@ export async function ensureUsdcAllowance(requiredUnits) {
   }
 
   throw new Error(
-    'USDC allowance is still too low after approve. Confirm the Approve tx in MetaMask, stay on Base Sepolia, ' +
+    'USDC allowance is still too low after approve. Confirm the Approve tx in MetaMask, stay on Base, ' +
       'and ensure REACT_APP_CONTRACT_ADDRESS matches the deployed WeRgame you are calling.'
   );
 }
@@ -490,8 +481,8 @@ export const getBlockchainErrorMessage = (err) => {
   if (message && typeof message === 'string') {
     if (message === 'data' || message.includes('missing revert data') || message.includes('CALL_EXCEPTION')) {
       return (
-        'On-chain call failed — usually wrong contract/token after a redeploy, or no USDC at that address on Base Sepolia. ' +
-        'Restart frontend and backend, confirm CONTRACT_ADDRESS and USDC_ADDRESS match deployed-address.txt, mint MockUSDC to your wallet, then try again.'
+        'On-chain call failed — usually wrong contract/token after a redeploy, or insufficient USDC on Base. ' +
+        'Restart frontend and backend, confirm CONTRACT_ADDRESS and USDC_ADDRESS match your mainnet deploy, then try again.'
       );
     }
     return message;

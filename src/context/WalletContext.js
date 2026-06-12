@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { initOnboard } from '../utils/web3onboard';
-import { BASE_TESTNET_PARAMS } from '../utils/blockchain';
+import { BASE_CHAIN_PARAMS, BASE_TESTNET_PARAMS } from '../utils/chainParams';
 
 const WalletContext = createContext();
-const REQUIRED_CHAIN_ID = BASE_TESTNET_PARAMS.chainId; // Base Sepolia in current config
+const REQUIRED_CHAIN_ID = BASE_CHAIN_PARAMS.chainId;
 const PERSISTED_WALLET_LABEL_KEY = 'wergame.walletLabel';
 
 export const useWallet = () => {
@@ -214,6 +214,8 @@ export const WalletProvider = ({ children }) => {
     account,
     isConnecting,
     chainId,
+    isOnBaseChain: chainId === REQUIRED_CHAIN_ID,
+    /** @deprecated use isOnBaseChain */
     isBaseSepolia: chainId === BASE_TESTNET_PARAMS.chainId,
     connect,
     disconnect,

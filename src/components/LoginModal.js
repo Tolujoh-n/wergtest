@@ -11,7 +11,7 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
-  const { showNotification } = useNotification();
+  const { showNotification, dismissNotification } = useNotification();
 
   const [view, setView] = useState('login'); // login | reset_request | reset_verify | reset_confirm
   const [resetEmail, setResetEmail] = useState('');
@@ -23,7 +23,7 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    showNotification('Logging in...', 'loading', 15000);
+    const loadingToastId = showNotification('Logging in...', 'loading', 0);
 
     try {
       await login(identifier, password);
@@ -34,6 +34,7 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
       setError(message);
       showNotification(message, 'error');
     } finally {
+      dismissNotification(loadingToastId);
       setLoading(false);
     }
   };

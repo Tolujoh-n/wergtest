@@ -1,10 +1,10 @@
 import init from '@web3-onboard/core';
 import injectedModule from '@web3-onboard/injected-wallets';
 import walletConnectModule from '@web3-onboard/walletconnect';
+import { BASE_CHAIN_PARAMS } from './chainParams';
 
 const injected = injectedModule();
 const walletConnect = walletConnectModule({
-  // WalletConnect Cloud project id (required for reliable mobile support)
   projectId: process.env.REACT_APP_WALLETCONNECT_PROJECT_ID || 'ba490b9a5e85784e42a85b08a41c8e22',
 });
 
@@ -20,10 +20,10 @@ export const initOnboard = () => {
     wallets: [injected, walletConnect],
     chains: [
       {
-        id: '0x14a34', // 84532 Base Sepolia
+        id: BASE_CHAIN_PARAMS.chainId,
         token: 'ETH',
-        label: 'Base Sepolia',
-        rpcUrl: 'https://sepolia.base.org',
+        label: BASE_CHAIN_PARAMS.chainName,
+        rpcUrl: BASE_CHAIN_PARAMS.rpcUrls[0],
       },
     ],
     appMetadata: {

@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { BASE_TESTNET_PARAMS } from './blockchain';
+import { BASE_CHAIN_PARAMS } from './chainParams';
 
 const ERC721_ABI = ['function balanceOf(address owner) view returns (uint256)'];
 const ERC1155_ABI = ['function balanceOf(address account, uint256 id) view returns (uint256)'];
@@ -35,8 +35,8 @@ function getReadProvider() {
   if (typeof window !== 'undefined' && window.ethereum) {
     return new ethers.BrowserProvider(window.ethereum);
   }
-  const chainId = Number.parseInt(BASE_TESTNET_PARAMS.chainId, 16);
-  return new ethers.JsonRpcProvider(BASE_TESTNET_PARAMS.rpcUrls[0], chainId, { staticNetwork: true });
+  const chainId = BASE_CHAIN_PARAMS.chainIdDecimal;
+  return new ethers.JsonRpcProvider(BASE_CHAIN_PARAMS.rpcUrls[0], chainId, { staticNetwork: true });
 }
 
 async function erc721Balance(provider, contractAddress, owner) {

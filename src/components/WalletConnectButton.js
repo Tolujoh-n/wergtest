@@ -8,7 +8,7 @@ const WalletConnectButton = ({ onSuccess, onConnectClick }) => {
   const [loading, setLoading] = useState(false);
   const { loginWithWallet, user, checkAuth } = useAuth();
   const { connect, account } = useWallet();
-  const { showNotification } = useNotification();
+  const { showNotification, dismissNotification } = useNotification();
   const authInProgressRef = useRef(false);
   const authPromiseRef = useRef(null);
 
@@ -27,8 +27,9 @@ const WalletConnectButton = ({ onSuccess, onConnectClick }) => {
         authInProgressRef.current = true;
 
         const loadingMsg = isLink ? 'Linking wallet...' : 'Logging in...';
+        let loadingToastId = null;
         if (!silent) {
-          showNotification(loadingMsg, 'loading', 20000);
+          loadingToastId = showNotification(loadingMsg, 'loading', 0);
         }
 
         try {
@@ -54,6 +55,9 @@ const WalletConnectButton = ({ onSuccess, onConnectClick }) => {
           }
           throw error;
         } finally {
+          if (loadingToastId) {
+            dismissNotification(loadingToastId);
+          }
           authInProgressRef.current = false;
         }
       })();
@@ -67,7 +71,7 @@ const WalletConnectButton = ({ onSuccess, onConnectClick }) => {
         }
       }
     },
-    [checkAuth, loginWithWallet, onSuccess, showNotification]
+    [checkAuth, dismissNotification, loginWithWallet, onSuccess, showNotification]
   );
 
   useEffect(() => {

@@ -238,7 +238,7 @@ const Profile = () => {
     try {
       await ensureConnected();
       if (!isBaseSepolia) {
-        showNotification('Please switch your wallet to Base Sepolia (Base chain) to transfer', 'warning');
+        showNotification('Please switch your wallet to Base to transfer', 'warning');
         return;
       }
 

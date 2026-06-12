@@ -13,7 +13,7 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { signup } = useAuth();
-  const { showNotification } = useNotification();
+  const { showNotification, dismissNotification } = useNotification();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -30,7 +30,7 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
     }
 
     setLoading(true);
-    showNotification('Signing up...', 'loading', 15000);
+    const loadingToastId = showNotification('Signing up...', 'loading', 0);
 
     try {
       await signup(email, password, username);
@@ -41,6 +41,7 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
       setError(message);
       showNotification(message, 'error');
     } finally {
+      dismissNotification(loadingToastId);
       setLoading(false);
     }
   };

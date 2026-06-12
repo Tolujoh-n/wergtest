@@ -3,6 +3,7 @@ import api from '../utils/api';
 import Modal from '../components/Modal';
 import { useNotification } from '../components/Notification';
 import { useWallet } from '../context/WalletContext';
+import { getBlockExplorerTxUrl } from '../utils/chainParams';
 import { formatUsdAmount } from '../utils/money';
 import {
   setFees as setFeesOnChain,
@@ -139,7 +140,7 @@ const SuperAdmin = () => {
     try {
       await ensureWalletConnected();
     } catch (switchErr) {
-      showNotification(switchErr?.message || 'Please switch to Base Sepolia in your wallet', 'error');
+      showNotification(switchErr?.message || 'Please switch to Base in your wallet', 'error');
       return;
     }
     if (!claimSignerFromApi) {
@@ -223,10 +224,10 @@ const SuperAdmin = () => {
 
   const handleSetFees = async () => {
     try {
-      // Connect wallet and switch to Base Sepolia if needed (pops wallet)
+      // Connect wallet and switch to Base if needed (pops wallet)
       await ensureWalletConnected();
     } catch (switchErr) {
-      showNotification(switchErr?.message || 'Please switch to Base Sepolia in your wallet', 'error');
+      showNotification(switchErr?.message || 'Please switch to Base in your wallet', 'error');
       return;
     }
     try {
@@ -320,7 +321,7 @@ const SuperAdmin = () => {
     try {
       await ensureWalletConnected();
     } catch (switchErr) {
-      showNotification(switchErr?.message || 'Please switch to Base Sepolia in your wallet', 'error');
+      showNotification(switchErr?.message || 'Please switch to Base in your wallet', 'error');
       return;
     }
     const amount = parseFloat(transferAmount);
@@ -377,7 +378,7 @@ const SuperAdmin = () => {
     try {
       await ensureWalletConnected();
     } catch (switchErr) {
-      showNotification(switchErr?.message || 'Please switch to Base Sepolia in your wallet', 'error');
+      showNotification(switchErr?.message || 'Please switch to Base in your wallet', 'error');
       return;
     }
     setMigrationLoading(true);
@@ -405,7 +406,7 @@ const SuperAdmin = () => {
     try {
       await ensureWalletConnected();
     } catch (switchErr) {
-      showNotification(switchErr?.message || 'Please switch to Base Sepolia in your wallet', 'error');
+      showNotification(switchErr?.message || 'Please switch to Base in your wallet', 'error');
       return;
     }
     if (!jackpotFundAmount || parseFloat(jackpotFundAmount) <= 0) {
@@ -433,7 +434,7 @@ const SuperAdmin = () => {
     try {
       await ensureWalletConnected();
     } catch (switchErr) {
-      showNotification(switchErr?.message || 'Please switch to Base Sepolia in your wallet', 'error');
+      showNotification(switchErr?.message || 'Please switch to Base in your wallet', 'error');
       return;
     }
     if (!jackpotWithdrawAmount || parseFloat(jackpotWithdrawAmount) <= 0) {
@@ -468,7 +469,7 @@ const SuperAdmin = () => {
     try {
       await ensureWalletConnected();
     } catch (switchErr) {
-      showNotification(switchErr?.message || 'Please switch to Base Sepolia in your wallet', 'error');
+      showNotification(switchErr?.message || 'Please switch to Base in your wallet', 'error');
       return;
     }
     if (!claimPoolFundAmount || parseFloat(claimPoolFundAmount) <= 0) {
@@ -495,7 +496,7 @@ const SuperAdmin = () => {
     try {
       await ensureWalletConnected();
     } catch (switchErr) {
-      showNotification(switchErr?.message || 'Please switch to Base Sepolia in your wallet', 'error');
+      showNotification(switchErr?.message || 'Please switch to Base in your wallet', 'error');
       return;
     }
     if (!claimPoolWithdrawAmount || parseFloat(claimPoolWithdrawAmount) <= 0) {
@@ -528,7 +529,7 @@ const SuperAdmin = () => {
     try {
       await ensureWalletConnected();
     } catch (switchErr) {
-      showNotification(switchErr?.message || 'Please switch to Base Sepolia in your wallet', 'error');
+      showNotification(switchErr?.message || 'Please switch to Base in your wallet', 'error');
       return;
     }
     try {
@@ -568,7 +569,7 @@ const SuperAdmin = () => {
     try {
       await ensureWalletConnected();
     } catch (switchErr) {
-      showNotification(switchErr?.message || 'Please switch to Base Sepolia in your wallet', 'error');
+      showNotification(switchErr?.message || 'Please switch to Base in your wallet', 'error');
       return;
     }
     if (!adminToSet || !adminToSet.trim()) {
@@ -911,7 +912,7 @@ const SuperAdmin = () => {
                 </p>
                 {!isBaseSepolia && account && (
                   <p className="text-yellow-800 dark:text-yellow-200 mt-2">
-                    ⚠️ You're on a different network. Click any button below to open your wallet and switch to Base Sepolia automatically.
+                    ⚠️ You're on a different network. Click any button below to open your wallet and switch to Base automatically.
                   </p>
                 )}
               </div>
@@ -1268,7 +1269,7 @@ const SuperAdmin = () => {
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-blue-600 dark:text-blue-400">
                             {row.txHash ? (
                               <a
-                                href={`https://sepolia.basescan.org/tx/${String(row.txHash)}`}
+                                href={getBlockExplorerTxUrl(row.txHash)}
                                 target="_blank"
                                 rel="noreferrer noopener"
                                 className="hover:underline"

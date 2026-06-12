@@ -14,23 +14,36 @@ export const NotificationProvider = ({ children }) => {
   const [notifications, setNotifications] = useState([]);
 
   const notificationIdRef = React.useRef(0);
+  const timeoutRefs = React.useRef(new Map());
+
   const showNotification = useCallback((message, type = 'info', duration = 3000) => {
     const id = `${Date.now()}-${++notificationIdRef.current}`;
     const notification = { id, message, type };
-    
+
     setNotifications((prev) => [...prev, notification]);
 
-    setTimeout(() => {
-      setNotifications((prev) => prev.filter((n) => n.id !== id));
-    }, duration);
+    if (duration > 0) {
+      const timeoutId = setTimeout(() => {
+        timeoutRefs.current.delete(id);
+        setNotifications((prev) => prev.filter((n) => n.id !== id));
+      }, duration);
+      timeoutRefs.current.set(id, timeoutId);
+    }
+
+    return id;
   }, []);
 
   const removeNotification = useCallback((id) => {
+    const timeoutId = timeoutRefs.current.get(id);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutRefs.current.delete(id);
+    }
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   }, []);
 
   return (
-    <NotificationContext.Provider value={{ showNotification }}>
+    <NotificationContext.Provider value={{ showNotification, dismissNotification: removeNotification }}>
       {children}
       <div className="fixed top-20 right-4 z-50 space-y-2">
         {notifications.map((notification) => (

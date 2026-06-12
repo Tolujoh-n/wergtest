@@ -14,6 +14,7 @@ import {
 import { ethers } from 'ethers';
 import { useAuth } from '../context/AuthContext';
 import { syncChainConfigFromServer } from '../utils/syncChainConfig';
+import { getBlockExplorerTxUrl } from '../utils/chainParams';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -141,7 +142,7 @@ export default function WalletPage() {
     try {
       await ensureConnected();
       if (!isBaseSepolia) {
-        showNotification('Please switch your wallet to Base Sepolia', 'warning');
+        showNotification('Please switch your wallet to Base', 'warning');
         return;
       }
       await syncChainConfigFromServer();
@@ -167,7 +168,7 @@ export default function WalletPage() {
     try {
       await ensureConnected();
       if (!isBaseSepolia) {
-        showNotification('Please switch your wallet to Base Sepolia', 'warning');
+        showNotification('Please switch your wallet to Base', 'warning');
         return;
       }
       const avail = Number(vaultInfo?.availableUsdc ?? 0);
@@ -211,7 +212,7 @@ export default function WalletPage() {
     try {
       await ensureConnected();
       if (!isBaseSepolia) {
-        showNotification('Please switch your wallet to Base Sepolia', 'warning');
+        showNotification('Please switch your wallet to Base', 'warning');
         return;
       }
 
@@ -464,7 +465,7 @@ export default function WalletPage() {
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-blue-600 dark:text-blue-400">
                           {row.txHash ? (
                             <a
-                              href={`https://sepolia.basescan.org/tx/${String(row.txHash)}`}
+                              href={getBlockExplorerTxUrl(row.txHash)}
                               target="_blank"
                               rel="noreferrer noopener"
                               className="hover:underline"
