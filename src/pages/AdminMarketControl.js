@@ -3,6 +3,11 @@ import { useParams, Link } from 'react-router-dom';
 import api from '../utils/api';
 import { useNotification } from '../components/Notification';
 import Modal from '../components/Modal';
+import TargetOddsInputs from '../components/TargetOddsInputs';
+import {
+  pctRowsFromStartingPrices,
+  startingPricesFromPctRows,
+} from '../utils/targetOdds';
 
 function getOutcomeKeys(item, kind) {
   if (kind === 'poll') {
@@ -72,7 +77,7 @@ const AdminMarketControl = () => {
   const [mmTickLoading, setMmTickLoading] = useState(false);
   const [mmVault, setMmVault] = useState(null);
   const [pauseByOption, setPauseByOption] = useState([]);
-  const [targetPrices, setTargetPrices] = useState([]);
+  const [targetOdds, setTargetOdds] = useState([]);
   const [botSaving, setBotSaving] = useState(false);
 
   const basePath = kind === 'poll' ? `/admin/orderbook/polls/${id}` : `/admin/orderbook/matches/${id}`;
@@ -93,7 +98,7 @@ const AdminMarketControl = () => {
       const c = docRes.data.control || {};
       const docItem = docRes.data.item;
       setPauseByOption(buildPauseByOptionRows(docItem, kind, c));
-      setTargetPrices(buildStartingPriceRows(docItem, kind));
+      setTargetOdds(pctRowsFromStartingPrices(buildStartingPriceRows(docItem, kind)));
       setForm({
         spreadBps: c.spreadBps ?? 80,
         minSpreadFloorBps: c.minSpreadFloorBps ?? 20,
@@ -144,25 +149,19 @@ const AdminMarketControl = () => {
 
   const saveBotSettings = async () => {
     setBotSaving(true);
+    const startingPrices = startingPricesFromPctRows(targetOdds);
     try {
       await api.put(basePath, {
         ...form,
         pauseByOption,
-        startingPrices: targetPrices.map((row) => ({
-          optionKey: row.optionKey,
-          yesPrice: Number(row.yesPrice) || 0,
-          noPrice: Number(row.noPrice) || 0,
-        })),
+        startingPrices,
       });
-      if (item?.marketId) {
-        await api.post(`${basePath}/mm-tick`);
-      }
-      showNotification('Bot settings saved — quotes reconfigured', 'success');
-      await fetchAll();
       setBotOpen(false);
+      setBotSaving(false);
+      showNotification('Bot settings saved — quotes updating in background', 'success');
+      fetchAll().catch(() => {});
     } catch (e) {
       showNotification(e.response?.data?.message || e.message, 'error');
-    } finally {
       setBotSaving(false);
     }
   };
@@ -172,22 +171,6 @@ const AdminMarketControl = () => {
       prev.map((row) =>
         row.optionKey === optionKey ? { ...row, [field]: checked } : row
       )
-    );
-  };
-
-  const updateTargetPrice = (optionKey, field, rawValue) => {
-    const value = Math.max(0.01, Math.min(0.99, parseFloat(rawValue) || 0));
-    setTargetPrices((prev) =>
-      prev.map((row) => {
-        if (row.optionKey !== optionKey) return row;
-        const next = { ...row, [field]: value };
-        if (field === 'yesPrice') {
-          next.noPrice = Math.max(0.01, Math.min(0.99, 1 - value));
-        } else if (field === 'noPrice') {
-          next.yesPrice = Math.max(0.01, Math.min(0.99, 1 - value));
-        }
-        return next;
-      })
     );
   };
 
@@ -631,56 +614,18 @@ const AdminMarketControl = () => {
           </div>
 
           <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">Target prices (bot mid)</h3>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">Target odds (%)</h3>
             <p className="text-xs text-gray-500 mb-3">
-              Set the mid prices the market maker works toward (same as starting prices at create). Saving will cancel
-              old bot quotes and repost at these levels, then run an MM tick.
+              Set the outcome percentages the market maker works toward (same as market detail display). Saving updates
+              target prices and requotes in the background.
             </p>
-            <div className="space-y-3">
-              {targetPrices.map((row) => {
-                const sum = (Number(row.yesPrice) || 0) + (Number(row.noPrice) || 0);
-                const sumOk = sum <= 1.0001;
-                return (
-                  <div
-                    key={row.optionKey}
-                    className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 bg-white dark:bg-gray-800"
-                  >
-                    <div className="text-sm font-semibold text-gray-900 dark:text-white mb-2">
-                      {outcomeLabel(row.optionKey, item, kind)}
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">YES price</label>
-                        <input
-                          type="number"
-                          min="0.01"
-                          max="0.99"
-                          step="0.01"
-                          className="w-full px-2 py-1.5 rounded border dark:bg-gray-700 dark:text-white text-sm"
-                          value={row.yesPrice}
-                          onChange={(e) => updateTargetPrice(row.optionKey, 'yesPrice', e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">NO price</label>
-                        <input
-                          type="number"
-                          min="0.01"
-                          max="0.99"
-                          step="0.01"
-                          className="w-full px-2 py-1.5 rounded border dark:bg-gray-700 dark:text-white text-sm"
-                          value={row.noPrice}
-                          onChange={(e) => updateTargetPrice(row.optionKey, 'noPrice', e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    {!sumOk && (
-                      <p className="text-xs text-red-600 mt-2">YES + NO must sum to at most 1.00</p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <TargetOddsInputs
+              rows={targetOdds}
+              balanceOptionKey={kind === 'match' ? 'TeamB' : targetOdds[targetOdds.length - 1]?.optionKey}
+              onUpdateRows={setTargetOdds}
+              getLabel={(optionKey) => outcomeLabel(optionKey, item, kind)}
+              compact
+            />
           </div>
 
           <button
@@ -689,7 +634,7 @@ const AdminMarketControl = () => {
             onClick={saveBotSettings}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
           >
-            {botSaving ? 'Saving & reconfiguring…' : 'Save bot settings'}
+            {botSaving ? 'Saving…' : 'Save bot settings'}
           </button>
         </div>
       </Modal>

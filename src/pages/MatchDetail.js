@@ -3431,7 +3431,8 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
-          {/* 1. Price Chart - first on mobile */}
+          {/* Main column: chart, markets, positions (comments are a separate grid row below on desktop) */}
+          <div className="contents">
           <div className="order-1 md:col-span-3 space-y-6">
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
               <div className="flex flex-col gap-4">
@@ -4161,7 +4162,10 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
               </div>
             )}
 
-            {/* Comments - Market only */}
+          </div>
+
+            {/* Comments — after trade panel on mobile; below main content on desktop */}
+            <div className="order-3 md:col-span-3">
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-bold text-gray-900 dark:text-white">Comments</h2>
@@ -4336,9 +4340,10 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                 )}
               </div>
             </div>
+            </div>
           </div>
 
-          {/* 2. Sidebar - second on mobile */}
+          {/* Trade panel — before comments on mobile */}
           <aside className="order-2 md:col-span-1 md:sticky md:top-24 md:self-start h-fit">
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
               {/* Check if resolved */}

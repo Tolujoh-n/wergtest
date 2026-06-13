@@ -14,6 +14,8 @@ import {
   getBlockchainErrorMessage,
 } from '../utils/blockchain';
 import Modal from '../components/Modal';
+import TargetOddsInputs from '../components/TargetOddsInputs';
+import { evenPctSplit, startingPricesFromPctRows, distributeEvenlyWithBalance } from '../utils/targetOdds';
 import TiptapEditor from '../components/TiptapEditor';
 import ImageUpload from '../components/ImageUpload';
 import { formatUsdAmount } from '../utils/money';
@@ -1123,12 +1125,6 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
     drawEnabled: true,
     minFreeTickets: 1,
     freePredictionEnabled: true,
-    teamAYesPrice: '0.33',
-    teamANoPrice: '0.67',
-    drawYesPrice: '0.33',
-    drawNoPrice: '0.67',
-    teamBYesPrice: '0.33',
-    teamBNoPrice: '0.67',
     // YES/NO seed liquidity per outcome (orderbook reference liquidity)
     teamAYes: '',
     teamANo: '',
@@ -1143,8 +1139,39 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
     teamAImage: '',
     teamBImage: '',
   });
+  const [targetOdds, setTargetOdds] = useState(() =>
+    distributeEvenlyWithBalance(
+      [
+        { optionKey: 'TeamA', pct: 0 },
+        { optionKey: 'Draw', pct: 0 },
+        { optionKey: 'TeamB', pct: 0 },
+      ],
+      'TeamB'
+    )
+  );
   const [availableStages, setAvailableStages] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    setTargetOdds(
+      formData.drawEnabled
+        ? distributeEvenlyWithBalance(
+            [
+              { optionKey: 'TeamA', pct: 0 },
+              { optionKey: 'Draw', pct: 0 },
+              { optionKey: 'TeamB', pct: 0 },
+            ],
+            'TeamB'
+          )
+        : distributeEvenlyWithBalance(
+            [
+              { optionKey: 'TeamA', pct: 0 },
+              { optionKey: 'TeamB', pct: 0 },
+            ],
+            'TeamB'
+          )
+    );
+  }, [formData.drawEnabled]);
 
   useEffect(() => {
     if (formData.cup) {
@@ -1168,22 +1195,11 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
     }
   }, [formData.cup, cups]);
 
-  const setMatchStartingYes = (yesKey, noKey, value) => {
-    setFormData((prev) => {
-      const next = { ...prev, [yesKey]: value };
-      const paired = complementaryStartingPrice(value);
-      if (paired != null) next[noKey] = paired;
-      return next;
-    });
-  };
-
-  const setMatchStartingNo = (yesKey, noKey, value) => {
-    setFormData((prev) => {
-      const next = { ...prev, [noKey]: value };
-      const paired = complementaryStartingPrice(value);
-      if (paired != null) next[yesKey] = paired;
-      return next;
-    });
+  const matchOddsLabel = (optionKey) => {
+    if (optionKey === 'TeamA') return formData.teamA || 'Team A';
+    if (optionKey === 'TeamB') return formData.teamB || 'Team B';
+    if (optionKey === 'Draw') return 'Draw';
+    return optionKey;
   };
 
   const handleSubmit = async (e) => {
@@ -1191,24 +1207,11 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
     setIsSubmitting(true);
     try {
       const selectedStage = availableStages.find(s => s._id === formData.stage);
-      const startingPrices = [
-        { optionKey: 'TeamA', yesPrice: parseFloat(formData.teamAYesPrice) || 0, noPrice: parseFloat(formData.teamANoPrice) || 0 },
-        { optionKey: 'TeamB', yesPrice: parseFloat(formData.teamBYesPrice) || 0, noPrice: parseFloat(formData.teamBNoPrice) || 0 },
-      ];
-      if (formData.drawEnabled) {
-        startingPrices.splice(1, 0, {
-          optionKey: 'Draw',
-          yesPrice: parseFloat(formData.drawYesPrice) || 0,
-          noPrice: parseFloat(formData.drawNoPrice) || 0,
-        });
-      }
-      for (const sp of startingPrices) {
-        if (sp.yesPrice + sp.noPrice > 1.0001) {
-          alert(`${sp.optionKey}: YES + NO prices must sum to ≤ 1`);
-          setIsSubmitting(false);
-          return;
-        }
-      }
+      const activeKeys = formData.drawEnabled ? ['TeamA', 'Draw', 'TeamB'] : ['TeamA', 'TeamB'];
+      const oddsRows = targetOdds.filter((r) => activeKeys.includes(r.optionKey));
+      const startingPrices = startingPricesFromPctRows(
+        oddsRows.length ? oddsRows : evenPctSplit(activeKeys)
+      );
       await onSubmit({
         ...formData,
         stageName: selectedStage?.name || formData.stageName,
@@ -1359,47 +1362,22 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
           </div>
         </div>
         <div className="space-y-3">
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Starting prices (YES + NO = 1 per outcome)</p>
-          <p className="text-xs text-gray-500 dark:text-gray-400">Editing YES or NO updates the other side automatically.</p>
-          <div className={`grid grid-cols-1 gap-3 ${formData.drawEnabled ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
-            {[
-              { key: 'teamA', label: formData.teamA || 'Team A', yes: 'teamAYesPrice', no: 'teamANoPrice' },
-              ...(formData.drawEnabled ? [{ key: 'draw', label: 'Draw', yes: 'drawYesPrice', no: 'drawNoPrice' }] : []),
-              { key: 'teamB', label: formData.teamB || 'Team B', yes: 'teamBYesPrice', no: 'teamBNoPrice' },
-            ].map((row) => {
-              const sum = (parseFloat(formData[row.yes]) || 0) + (parseFloat(formData[row.no]) || 0);
-              return (
-              <div key={row.key} className="border rounded-lg p-3 dark:border-gray-700">
-                <div className="text-sm font-medium mb-2">{row.label}</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="1"
-                    placeholder="YES"
-                    value={formData[row.yes]}
-                    onChange={(e) => setMatchStartingYes(row.yes, row.no, e.target.value)}
-                    className="px-2 py-1 border rounded dark:bg-gray-700 dark:text-white text-sm"
-                  />
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="1"
-                    placeholder="NO"
-                    value={formData[row.no]}
-                    onChange={(e) => setMatchStartingNo(row.yes, row.no, e.target.value)}
-                    className="px-2 py-1 border rounded dark:bg-gray-700 dark:text-white text-sm"
-                  />
-                </div>
-                <p className={`text-[11px] mt-1 ${Math.abs(sum - 1) < 0.011 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                  Sum: {sum.toFixed(2)}
-                </p>
-              </div>
-            );
-            })}
-          </div>
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Target odds (%)</p>
+          <TargetOddsInputs
+            rows={targetOdds.filter((r) =>
+              formData.drawEnabled ? true : r.optionKey !== 'Draw'
+            )}
+            balanceOptionKey="TeamB"
+            onUpdateRows={(rows) => {
+              if (formData.drawEnabled) {
+                setTargetOdds(rows);
+              } else {
+                const drawRow = targetOdds.find((r) => r.optionKey === 'Draw');
+                setTargetOdds(drawRow ? [...rows, drawRow] : rows);
+              }
+            }}
+            getLabel={matchOddsLabel}
+          />
         </div>
         <div className="space-y-3">
           <p className="text-sm text-gray-600 dark:text-gray-400">
@@ -2014,15 +1992,45 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const addOption = () => {
-    setFormData({
-      ...formData,
-      options: [...formData.options, { text: '', image: '', yesLiquidity: '', noLiquidity: '', yesPrice: '0.5', noPrice: '0.5' }],
+    setFormData((prev) => {
+      const newOptions = [
+        ...prev.options,
+        { text: '', image: '', yesLiquidity: '', noLiquidity: '', targetPct: 0 },
+      ];
+      const keys = newOptions.map((_, i) => `__idx_${i}`);
+      const balanceKey = keys[keys.length - 1];
+      const split = distributeEvenlyWithBalance(
+        keys.map((optionKey) => ({ optionKey, pct: 0 })),
+        balanceKey
+      );
+      return {
+        ...prev,
+        options: newOptions.map((opt, i) => ({
+          ...opt,
+          targetPct: split[i]?.pct ?? 100 / newOptions.length,
+        })),
+      };
     });
   };
 
   const removeOption = (index) => {
-    const newOptions = formData.options.filter((_, i) => i !== index);
-    setFormData({ ...formData, options: newOptions });
+    setFormData((prev) => {
+      const newOptions = prev.options.filter((_, i) => i !== index);
+      if (!newOptions.length) return { ...prev, options: [] };
+      const keys = newOptions.map((_, i) => `__idx_${i}`);
+      const balanceKey = keys[keys.length - 1];
+      const split = distributeEvenlyWithBalance(
+        keys.map((optionKey) => ({ optionKey, pct: 0 })),
+        balanceKey
+      );
+      return {
+        ...prev,
+        options: newOptions.map((opt, i) => ({
+          ...opt,
+          targetPct: split[i]?.pct ?? 100 / newOptions.length,
+        })),
+      };
+    });
   };
 
   const updateOption = (index, field, value) => {
@@ -2031,37 +2039,43 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
     setFormData({ ...formData, options: newOptions });
   };
 
-  const updateOptionYesPrice = (index, value) => {
-    const newOptions = [...formData.options];
-    const opt = { ...newOptions[index], yesPrice: value };
-    const paired = complementaryStartingPrice(value);
-    if (paired != null) opt.noPrice = paired;
-    newOptions[index] = opt;
-    setFormData({ ...formData, options: newOptions });
+  const pollOddsRows = formData.options.map((opt, i) => ({
+    optionKey: `__idx_${i}`,
+    pct: Number(opt.targetPct) || 0,
+  }));
+
+  const updatePollOdds = (rows) => {
+    setFormData((prev) => ({
+      ...prev,
+      options: prev.options.map((opt, i) => ({
+        ...opt,
+        targetPct: rows.find((r) => r.optionKey === `__idx_${i}`)?.pct ?? opt.targetPct,
+      })),
+    }));
   };
 
-  const updateOptionNoPrice = (index, value) => {
-    const newOptions = [...formData.options];
-    const opt = { ...newOptions[index], noPrice: value };
-    const paired = complementaryStartingPrice(value);
-    if (paired != null) opt.yesPrice = paired;
-    newOptions[index] = opt;
-    setFormData({ ...formData, options: newOptions });
+  const pollOddsLabel = (key) => {
+    const i = parseInt(String(key).replace('__idx_', ''), 10);
+    const opt = formData.options[i];
+    return opt?.text?.trim() || `Option ${i + 1}`;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
     try {
-      const startingPrices = formData.options.map((opt) => ({
-        optionKey: String(opt.text || '').trim(),
-        yesPrice: parseFloat(opt.yesPrice) || 0,
-        noPrice: parseFloat(opt.noPrice) || 0,
+      const pctRows = formData.options.map((opt, i) => ({
+        optionKey: `__idx_${i}`,
+        pct: Number(opt.targetPct) || 0,
+      }));
+      const priceRows = startingPricesFromPctRows(pctRows);
+      const startingPrices = priceRows.map((sp, i) => ({
+        ...sp,
+        optionKey: String(formData.options[i].text || '').trim(),
       }));
       for (const sp of startingPrices) {
-        if (!sp.optionKey) continue;
-        if (sp.yesPrice + sp.noPrice > 1.0001) {
-          alert(`Option "${sp.optionKey}": YES + NO must sum to ≤ 1`);
+        if (!sp.optionKey) {
+          alert('Each poll option needs text before creating the market.');
           setIsSubmitting(false);
           return;
         }
@@ -2169,6 +2183,17 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
                 + Add Option
               </button>
             </div>
+            {formData.options.length > 0 && (
+              <div className="border rounded-lg p-4 dark:border-gray-700 mb-4">
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Target odds (%)</p>
+                <TargetOddsInputs
+                  rows={pollOddsRows}
+                  balanceOptionKey={pollOddsRows[pollOddsRows.length - 1]?.optionKey}
+                  onUpdateRows={updatePollOdds}
+                  getLabel={pollOddsLabel}
+                />
+              </div>
+            )}
             {formData.options.map((option, index) => (
               <div key={index} className="border rounded-lg p-4 space-y-3">
                 <div className="flex justify-between items-center">
@@ -2197,41 +2222,6 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
                   onChange={(url) => updateOption(index, 'image', url)}
                   folder="wergame/poll-options"
                 />
-                <p className="text-xs text-gray-500 dark:text-gray-400">YES + NO = 1 — editing one side updates the other.</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">YES price (0–1)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="1"
-                      value={option.yesPrice ?? '0.5'}
-                      onChange={(e) => updateOptionYesPrice(index, e.target.value)}
-                      className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">NO price (0–1)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="1"
-                      value={option.noPrice ?? '0.5'}
-                      onChange={(e) => updateOptionNoPrice(index, e.target.value)}
-                      className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
-                    />
-                  </div>
-                </div>
-                {(() => {
-                  const sum = (parseFloat(option.yesPrice) || 0) + (parseFloat(option.noPrice) || 0);
-                  return (
-                    <p className={`text-xs ${Math.abs(sum - 1) < 0.011 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                      Price sum: {sum.toFixed(2)}
-                    </p>
-                  );
-                })()}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">YES liquidity (USDC)</label>
