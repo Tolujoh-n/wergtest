@@ -486,7 +486,7 @@ const JackpotLine = ({ amount }) => (
   </p>
 );
 
-const CardActions = ({ freeEnabled, freeTo, boostTo, marketTo }) => (
+const CardActions = ({ freeEnabled, marketEnabled, freeTo, boostTo, marketTo }) => (
   <div className="mt-auto flex flex-wrap gap-2 pt-1">
     {freeEnabled ? (
       <Link to={freeTo} className={actionBtnClass('free')}>
@@ -496,14 +496,17 @@ const CardActions = ({ freeEnabled, freeTo, boostTo, marketTo }) => (
     <Link to={boostTo} className={actionBtnClass('boost')}>
       Boost
     </Link>
-    <Link to={marketTo} className={actionBtnClass('market')}>
-      Market
-    </Link>
+    {marketEnabled !== false ? (
+      <Link to={marketTo} className={actionBtnClass('market')}>
+        Market
+      </Link>
+    ) : null}
   </div>
 );
 
 const MatchCard = ({ match, featured = false, sponsored = false }) => {
   const freeEnabled = match.freePredictionEnabled !== false;
+  const marketEnabled = match.marketEnabled !== false;
   const jackpotAmount =
     match.isResolved && match.originalFreeJackpotPool
       ? match.originalFreeJackpotPool
@@ -576,6 +579,7 @@ const MatchCard = ({ match, featured = false, sponsored = false }) => {
 
         <CardActions
           freeEnabled={freeEnabled}
+          marketEnabled={marketEnabled}
           freeTo={`/match/${match._id}/free`}
           boostTo={`/match/${match._id}/boost`}
           marketTo={`/match/${match._id}/market`}
@@ -587,6 +591,7 @@ const MatchCard = ({ match, featured = false, sponsored = false }) => {
 
 const PollCard = ({ poll, sponsored = false, featured = false, impliedByMarketId = {} }) => {
   const freeEnabled = poll.freePredictionEnabled !== false;
+  const marketEnabled = poll.marketEnabled !== false;
   const { top, total, hasMore } = rankPollOptionsByImplied(poll, impliedByMarketId, 3);
   const jackpotAmount =
     poll.isResolved && poll.originalFreeJackpotPool ? poll.originalFreeJackpotPool : poll.freeJackpotPool || 0;
@@ -676,7 +681,7 @@ const PollCard = ({ poll, sponsored = false, featured = false, impliedByMarketId
                 </div>
               </div>
             ))}
-            {hasMore ? (
+            {hasMore && marketEnabled ? (
               <Link
                 to={`/poll/${poll._id}/market`}
                 className="inline-block text-xs font-semibold text-red-600 dark:text-red-400 hover:underline"
@@ -691,6 +696,7 @@ const PollCard = ({ poll, sponsored = false, featured = false, impliedByMarketId
 
         <CardActions
           freeEnabled={freeEnabled}
+          marketEnabled={marketEnabled}
           freeTo={`/poll/${poll._id}/free`}
           boostTo={`/poll/${poll._id}/boost`}
           marketTo={`/poll/${poll._id}/market`}

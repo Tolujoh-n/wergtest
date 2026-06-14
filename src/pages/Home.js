@@ -239,6 +239,9 @@ const Home = () => {
 };
 
 const MatchCard = ({ match }) => {
+  const freeEnabled = match.freePredictionEnabled !== false;
+  const marketEnabled = match.marketEnabled !== false;
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 hover:shadow-lg transition-shadow">
       <div className="flex items-center justify-between mb-3">
@@ -279,24 +282,28 @@ const MatchCard = ({ match }) => {
         </div>
       </div>
       <div className="flex items-center space-x-2">
-        <Link
-          to={`/match/${match._id}/free`}
-          className="flex-1 px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-center text-sm"
-        >
-          FREE
-        </Link>
+        {freeEnabled ? (
+          <Link
+            to={`/match/${match._id}/free`}
+            className="flex-1 px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-center text-sm"
+          >
+            FREE
+          </Link>
+        ) : null}
         <Link
           to={`/match/${match._id}/boost`}
           className="flex-1 px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-center text-sm"
         >
           BOOST
         </Link>
-        <Link
-          to={`/match/${match._id}/market`}
-          className="flex-1 px-3 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors text-center text-sm"
-        >
-          MARKET
-        </Link>
+        {marketEnabled !== false ? (
+          <Link
+            to={`/match/${match._id}/market`}
+            className="flex-1 px-3 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors text-center text-sm"
+          >
+            MARKET
+          </Link>
+        ) : null}
       </div>
     </div>
   );

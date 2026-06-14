@@ -47,6 +47,8 @@ export default function FreePredictionModal({
   minTickets = 1,
   onConfirm,
   loading = false,
+  mode = 'create',
+  existingTicketsStaked = 0,
 }) {
   const { account, ensureConnected, isConnecting } = useWallet();
   const { user } = useAuth();
@@ -92,10 +94,12 @@ export default function FreePredictionModal({
   const inc = () => setStake((s) => Math.min(maxStake, s + 1));
   const setMax = () => setStake(maxStake);
 
+  const isAddMode = mode === 'add';
+
   if (!open) return null;
 
   return (
-    <Modal isOpen={open} onClose={onClose} title="Free prediction" size="lg">
+    <Modal isOpen={open} onClose={onClose} title={isAddMode ? 'Add tickets' : 'Free prediction'} size="lg">
       <div className="space-y-5 text-sm">
         {outcomeLabel ? (
           <div className="flex items-center gap-3 rounded-lg border border-slate-200 dark:border-slate-600 p-3 bg-slate-50/80 dark:bg-slate-800/50">
@@ -125,9 +129,16 @@ export default function FreePredictionModal({
           isConnecting={isConnecting}
         />
 
+        {isAddMode ? (
+          <p className="text-xs text-slate-600 dark:text-slate-400 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 px-3 py-2">
+            You already have <strong>{existingTicketsStaked}</strong> ticket{existingTicketsStaked === 1 ? '' : 's'} on this pick.
+            Add more to increase your jackpot share — you cannot change or reduce your outcome.
+          </p>
+        ) : null}
+
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
-            Tickets for this pick (min {minTickets})
+            {isAddMode ? `Tickets to add (min ${minTickets})` : `Tickets for this pick (min ${minTickets})`}
           </label>
           <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
             More tickets = larger jackpot share if you win (weighted by tickets staked).
@@ -180,7 +191,7 @@ export default function FreePredictionModal({
             ) : (
               <>
                 <OutcomePickAvatar image={outcomeImage} label={outcomeLabel} sizeClass="w-7 h-7" />
-                <span className="truncate">{outcomeLabel || 'Confirm'}</span>
+                <span className="truncate">{isAddMode ? `Add ${stake} ticket${stake === 1 ? '' : 's'}` : (outcomeLabel || 'Confirm')}</span>
               </>
             )}
           </button>

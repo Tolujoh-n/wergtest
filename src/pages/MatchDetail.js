@@ -144,6 +144,7 @@ const MatchDetail = () => {
   const [poll, setPoll] = useState(null);
   const [loading, setLoading] = useState(true);
   const [prediction, setPrediction] = useState(null);
+  const [boostPredictions, setBoostPredictions] = useState([]);
   const { user } = useAuth();
   const navigate = useNavigate();
   const { showNotification } = useNotification();
@@ -209,20 +210,29 @@ const MatchDetail = () => {
 
   const fetchUserPrediction = useCallback(async () => {
     try {
-      // Fetch prediction by type to avoid mixing free and boost predictions
-      const endpoint = isPoll 
+      const endpoint = isPoll
         ? `/predictions/poll/${pollId}/user?type=${type}`
         : `/predictions/match/${matchId}/user?type=${type}`;
       const response = await api.get(endpoint);
-      // Handle both single prediction and array (for market type)
+      if (type === 'boost') {
+        const list = Array.isArray(response.data)
+          ? response.data
+          : response.data
+            ? [response.data]
+            : [];
+        setBoostPredictions(list);
+        setPrediction(null);
+        return;
+      }
       const predictionData = Array.isArray(response.data) ? response.data[0] : response.data;
-      setPrediction(predictionData);
+      setPrediction(predictionData || null);
+      setBoostPredictions([]);
     } catch (error) {
-      // User hasn't predicted yet for this type - 404 is expected
       if (error.response?.status !== 404) {
         console.error('Error fetching prediction:', error);
       }
       setPrediction(null);
+      setBoostPredictions([]);
     }
   }, [isPoll, pollId, matchId, type]);
 
@@ -259,42 +269,27 @@ const MatchDetail = () => {
     }
 
     try {
-      // Check if prediction exists and item is still upcoming
-      const canUpdate = prediction && item && (item.status === 'upcoming' || item.status === 'active');
-      
       if (type === 'free') {
-        if (canUpdate) {
-          // Update existing prediction
-          await api.put(`/predictions/${prediction._id}`, { outcome });
-          showNotification('Prediction updated successfully!', 'success');
+        const ticketsToStake =
+          amount != null
+            ? Math.max(1, parseInt(amount, 10) || 1)
+            : Math.max(1, parseInt(item.minFreeTickets, 10) || 1);
+
+        if (prediction) {
+          await api.post(`/predictions/free/${prediction._id}/add-tickets`, {
+            ticketsToAdd: ticketsToStake,
+          });
+          showNotification(`${ticketsToStake} ticket${ticketsToStake === 1 ? '' : 's'} added to your pick!`, 'success');
         } else {
-          // Create new prediction
-          console.log(`[FREE PREDICTION] Attempting to create prediction for ${isPoll ? 'poll' : 'match'}: ${itemId}, outcome: ${outcome}`);
-          try {
-            const ticketsToStake = amount != null ? Math.max(1, parseInt(amount, 10) || 1) : Math.max(1, parseInt(item.minFreeTickets, 10) || 1);
-            const response = await api.post('/predictions/free', {
-              [isPoll ? 'pollId' : 'matchId']: itemId,
-              outcome,
-              ticketsToStake,
-            });
-            console.log('[FREE PREDICTION] Prediction created successfully:', response.data);
-            showNotification('Free prediction submitted successfully!', 'success');
-          } catch (error) {
-            console.error('[FREE PREDICTION] Error creating prediction:', error.response?.data || error.message);
-            showNotification(error.response?.data?.message || 'Failed to create prediction', 'error');
-            throw error; // Re-throw to prevent further execution
-          }
+          await api.post('/predictions/free', {
+            [isPoll ? 'pollId' : 'matchId']: itemId,
+            outcome,
+            ticketsToStake,
+          });
+          showNotification('Free prediction submitted successfully!', 'success');
         }
       } else if (type === 'boost') {
-        // Wallet will auto-connect when blockchain function is called
-        
-        if (canUpdate) {
-          // Update existing prediction - amount is automatically preserved
-          // No blockchain call needed for updating outcome only
-          await api.put(`/predictions/${prediction._id}`, { outcome });
-          showNotification('Prediction updated successfully! Your stake amount has been preserved.', 'success');
-        } else {
-          // Create new prediction - amount is required
+          // Create new boost position on this outcome — amount is required
           if (!amount) {
             showNotification('Please enter an amount to stake', 'warning');
             return;
@@ -424,9 +419,8 @@ const MatchDetail = () => {
             console.error('Blockchain transaction failed:', blockchainError);
             const msg = getBlockchainErrorMessage(blockchainError);
             showNotification(msg, 'error');
-            throw blockchainError; // Re-throw to prevent backend call
+            throw blockchainError;
           }
-        }
       }
       
       // Refresh item data to get updated stats (like freePredictions count, boostPool, etc.)
@@ -470,7 +464,12 @@ const MatchDetail = () => {
             ? `/predictions/poll/${item._id}/user?type=boost`
             : `/predictions/match/${item._id}/user?type=boost`;
           const response = await api.get(endpoint);
-          prediction = response.data;
+          const list = Array.isArray(response.data)
+            ? response.data
+            : response.data
+              ? [response.data]
+              : [];
+          prediction = list.find((p) => String(p._id) === String(predictionId)) || null;
           if (prediction) {
             normalizedOutcome = prediction.outcome;
           } else {
@@ -627,7 +626,7 @@ const MatchDetail = () => {
       <BoostMatchView
         item={item}
         isPoll={isPoll}
-        prediction={prediction}
+        boostPredictions={boostPredictions}
         onPredict={handlePredict}
         onStakeAction={handleStakeAction}
         onClaim={handleClaim}
@@ -681,13 +680,12 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
   const { user, refreshUser } = useAuth();
   const { ensureConnected, isConnecting } = useWallet();
   const { showNotification } = useNotification();
-  const [showPredictModal, setShowPredictModal] = useState(false);
-  const [selectedOutcome] = useState(null);
   const [freePickerOpen, setFreePickerOpen] = useState(false);
   const [phoneVerifyOpen, setPhoneVerifyOpen] = useState(false);
   const [pendingFreePick, setPendingFreePick] = useState(null);
   const [freePickerOutcome, setFreePickerOutcome] = useState(null);
   const [freePickerOutcomeImage, setFreePickerOutcomeImage] = useState(null);
+  const [freePickerMode, setFreePickerMode] = useState('create');
   const [freePredictLoading, setFreePredictLoading] = useState(false);
   const [freeJackpotStats, setFreeJackpotStats] = useState(null);
   const [linkingFreeWallet, setLinkingFreeWallet] = useState(false);
@@ -804,6 +802,23 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
     return rows;
   };
 
+  const canAddFreeTickets = Boolean(
+    prediction && !locked && !isResolved && (item.status === 'upcoming' || item.status === 'active')
+  );
+
+  const openFreeAddTickets = () => {
+    if (!canAddFreeTickets || !prediction) return;
+    setFreePickerMode('add');
+    setFreePickerOutcome(getDisplayOutcome(prediction.outcome));
+    const opts = getOutcomeOptions();
+    const matchOpt = opts.find((o) => {
+      const text = typeof o === 'string' ? o : o.text;
+      return text === prediction.outcome || getDisplayOutcome(prediction.outcome) === text;
+    });
+    setFreePickerOutcomeImage(typeof matchOpt === 'object' ? matchOpt?.image : null);
+    setFreePickerOpen(true);
+  };
+
   const openFreePicker = (optionText, optionImage = null) => {
     if (locked) return;
     if (!user) {
@@ -815,6 +830,7 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
       setPhoneVerifyOpen(true);
       return;
     }
+    setFreePickerMode('create');
     setFreePickerOutcome(optionText);
     setFreePickerOutcomeImage(optionImage);
     setFreePickerOpen(true);
@@ -822,6 +838,7 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
 
   const continuePendingFreePick = useCallback(() => {
     if (!pendingFreePick) return;
+    setFreePickerMode('create');
     setFreePickerOutcome(pendingFreePick.optionText);
     setFreePickerOutcomeImage(pendingFreePick.optionImage);
     setPendingFreePick(null);
@@ -837,10 +854,13 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
   const confirmFreePick = async (stake) => {
     setFreePredictLoading(true);
     try {
-      await onPredict(freePickerOutcome, stake);
+      const outcomeForSubmit =
+        freePickerMode === 'add' && prediction
+          ? prediction.outcome
+          : freePickerOutcome;
+      await onPredict(outcomeForSubmit, stake);
       await Promise.all([fetchFreeJackpotStats(), reloadFreeTicketData()]);
       setFreePickerOpen(false);
-      setShowPredictModal(false);
     } finally {
       setFreePredictLoading(false);
     }
@@ -1015,9 +1035,7 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
               )}
               {!isResolved && (
                 <>
-                  <p className="text-gray-600 dark:text-gray-400 mb-1">
-                    Status: Pending
-                  </p>
+                  <p className="text-gray-600 dark:text-gray-400 mb-1">Status: Pending</p>
                   <p className="text-gray-600 dark:text-gray-400 mb-1">
                     Tickets played:{' '}
                     <strong>{Math.max(1, parseInt(prediction.ticketsStaked, 10) || 1)}</strong>
@@ -1042,19 +1060,17 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
                     Based on jackpot pool ({formatUsdAmount(effectiveFreeJackpotPool)}) and your
                     ticket share vs others on the same pick.
                   </p>
+                  {canAddFreeTickets && (
+                    <button
+                      type="button"
+                      onClick={openFreeAddTickets}
+                      className="mt-4 px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-semibold"
+                    >
+                      Add tickets
+                    </button>
+                  )}
                 </>
               )}
-              {/* {canPredict && (
-                <button
-                  onClick={() => {
-                    setSelectedOutcome(getDisplayOutcome(prediction.outcome));
-                    setShowPredictModal(true);
-                  }}
-                  className="mt-4 px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-                >
-                  Update Prediction
-                </button>
-              )} */}
               {locked && (
                 <p className="mt-4 px-4 py-2 bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 rounded-lg">
                   Predictions are locked for this match/poll
@@ -1072,7 +1088,7 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
             </div>
           ) : (
             <div className="space-y-4">
-              {getOutcomeOptions().map((option, index) => {
+              {getOutcomeOptions().map((option) => {
                 const optionText = typeof option === 'string' ? option : option.text;
                 const optionImage = typeof option === 'object' ? option.image : null;
                 return (
@@ -1084,7 +1100,7 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
                     {(optionImage === 'draw-icon' || optionImage) && (
                       <OutcomeOptionAvatar image={optionImage} label={optionText} sizeClass="w-12 h-12" />
                     )}
-                    <span>{optionText} {isPoll ? '' : 'Wins'}</span>
+                    <span>{optionText} {isPoll ? '' : ' Wins'}</span>
                   </button>
                 );
               })}
@@ -1108,6 +1124,8 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
           <FreePredictionModal
             open={freePickerOpen}
             onClose={() => setFreePickerOpen(false)}
+            mode={freePickerMode}
+            existingTicketsStaked={Math.max(1, parseInt(prediction?.ticketsStaked, 10) || 1)}
             outcomeLabel={freePickerOutcome || 'Confirm'}
             outcomeImage={freePickerOutcomeImage}
             outcomeSuffix={isPoll ? '' : ' Wins'}
@@ -1115,54 +1133,6 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
             onConfirm={confirmFreePick}
             loading={freePredictLoading}
           />
-
-          {showPredictModal && (
-            <Modal isOpen={true} onClose={() => setShowPredictModal(false)} title="Update Prediction">
-              <div className="space-y-4">
-                <p className="text-gray-700 dark:text-gray-300 mb-4">
-                  Select a new outcome:
-                </p>
-                <div className="space-y-2">
-                  {getOutcomeOptions().map((option, index) => {
-                    const optionText = typeof option === 'string' ? option : option.text;
-                    const optionImage = typeof option === 'object' ? option.image : null;
-                    return (
-                      <button
-                        key={optionText}
-                        onClick={() => {
-                          if (!locked) {
-                            setShowPredictModal(false);
-                            openFreePicker(optionText, optionImage);
-                          }
-                        }}
-                        disabled={locked}
-                        className={`w-full px-4 py-3 rounded-lg font-semibold transition-colors flex items-center justify-center gap-3 ${
-                          locked
-                            ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                            : selectedOutcome === optionText
-                            ? 'bg-blue-500 text-white'
-                            : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                        }`}
-                      >
-                        {optionImage === 'draw-icon' ? (
-                          <DrawOutcomeAvatar className="w-8 h-8" />
-                        ) : optionImage ? (
-                          <img src={optionImage} alt={optionText} className="w-8 h-8 object-cover rounded-full" />
-                        ) : null}
-                        <span>{optionText} {isPoll ? '' : 'Wins'}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <button
-                  onClick={() => setShowPredictModal(false)}
-                  className="w-full px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
-                >
-                  Cancel
-                </button>
-              </div>
-            </Modal>
-          )}
         </div>
       </div>
     </div>
@@ -1172,7 +1142,7 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
 const BoostMatchView = ({
   item,
   isPoll,
-  prediction,
+  boostPredictions = [],
   onPredict,
   onStakeAction,
   onClaim,
@@ -1186,7 +1156,7 @@ const BoostMatchView = ({
   const [showStakeModal, setShowStakeModal] = useState(false);
   const [selectedOutcome, setSelectedOutcome] = useState(null);
   const [amount, setAmount] = useState('');
-  const [stakeAction, setStakeAction] = useState('add');
+  const [stakeTargetPrediction, setStakeTargetPrediction] = useState(null);
   const [stakeAmount, setStakeAmount] = useState('');
   const [fees, setFees] = useState({ platformFee: 10, boostJackpotFee: 5 });
   const [goldenRanges, setGoldenRanges] = useState([]);
@@ -1267,9 +1237,7 @@ const BoostMatchView = ({
   };
 
   const boostPotentialWin = (grossUsdc, existingNetStake = 0, outcomeLabel = null) => {
-    const outcome =
-      outcomeLabel ??
-      (prediction ? prediction.outcome : selectedOutcome);
+    const outcome = outcomeLabel ?? selectedOutcome;
     const outcomeTotal = stakeOnOutcome(outcome);
     const netNew = estimateNetStake(grossUsdc);
     return estimateBoostPotentialWin({
@@ -1282,6 +1250,43 @@ const BoostMatchView = ({
       jackpotFeePct,
     });
   };
+
+  const getDisplayOutcome = (rawOutcome) => {
+    if (!rawOutcome) return '';
+    return formatMarketOrderbookOutcomeLabel(String(rawOutcome).trim(), item, isPoll);
+  };
+
+  const outcomesMatch = (predOutcome, optionText) => {
+    const a = String(predOutcome || '').trim();
+    const b = String(optionText || '').trim();
+    if (!a || !b) return false;
+    if (a.toLowerCase() === b.toLowerCase()) return true;
+    if (!isPoll) {
+      const lower = a.toLowerCase();
+      if (lower === 'teama' && b === item.teamA) return true;
+      if (lower === 'teamb' && b === item.teamB) return true;
+      if (lower === 'draw' && b.toLowerCase() === 'draw') return true;
+    }
+    return getDisplayOutcome(a).toLowerCase() === b.toLowerCase();
+  };
+
+  const findBoostForOption = (optionText) =>
+    boostPredictions.find((p) => outcomesMatch(p.outcome, optionText)) || null;
+
+  const totalBoosted = boostPredictions.reduce(
+    (sum, p) => sum + Number(p.totalStake || p.amount || 0),
+    0
+  );
+
+  const isPredictionWon = (pred) =>
+    pred &&
+    (pred.status === 'won' ||
+      (pred.status === 'settled' && (pred.payout || 0) > 0) ||
+      ((pred.payout || 0) > 0 && pred.status !== 'lost'));
+
+  const winningPredictions = boostPredictions.filter(isPredictionWon);
+  const hasAnyWin = winningPredictions.length > 0;
+  const hasAnyStake = boostPredictions.length > 0;
   
   const isResolved = item.isResolved;
   // Map result to display name: TeamA -> teamA name, TeamB -> teamB name, Draw -> Draw
@@ -1299,13 +1304,90 @@ const BoostMatchView = ({
     return result;
   };
   const resolvedOutcome = getDisplayResult();
-  // Check if won: status is 'won' OR (status is 'settled' and payout > 0) OR (payout > 0 and status is not 'lost')
-  const hasWon = prediction && (
-    prediction.status === 'won' || 
-    (prediction.status === 'settled' && (prediction.payout || 0) > 0) ||
-    ((prediction.payout || 0) > 0 && prediction.status !== 'lost')
-  );
   const canModify = !locked && !isResolved && (item.status === 'upcoming' || item.status === 'active');
+
+  const handleClaimPrediction = async (prediction) => {
+    try {
+      if (!item || !item.marketId) {
+        showNotification('Market not found', 'error');
+        return;
+      }
+      if (!walletAddress) {
+        showNotification('Connect your wallet (same as on your profile)', 'warning');
+        return;
+      }
+
+      const { data: auth } = await api.post(`/predictions/${prediction._id}/claim-authorization`, {
+        walletAddress,
+      });
+
+      const okGas = await ensureGasOrDrip(walletAddress, { label: 'claim' });
+      if (!okGas) return;
+
+      const txHash =
+        auth.claimKind === 'orderbook'
+          ? await claimOrderbookPositionWithAuth(
+              auth.marketId,
+              auth.amountWei,
+              auth.positionKey,
+              auth.predictionId,
+              auth.deadline,
+              auth.signature
+            )
+          : await claimPredictionWinsWithAuth(
+              auth.marketId,
+              auth.isBoost,
+              auth.amountWei,
+              auth.predictionId,
+              auth.deadline,
+              auth.signature
+            );
+      showNotification(`Claim sent to blockchain! TX: ${txHash.slice(0, 10)}...`, 'success');
+
+      try {
+        await api.post('/transactions', {
+          action: auth.claimKind === 'boost' ? 'boost_claim' : 'market_claim',
+          txHash,
+          amount: parseFloat(unitsToUsdc(auth.amountWei)),
+          currency: 'USDC',
+          itemType: isPoll ? 'poll' : 'match',
+          itemId: item._id,
+          meta: { predictionId: String(prediction._id) },
+        });
+      } catch {
+        // ignore
+      }
+
+      await api.post(`/predictions/${prediction._id}/claim`);
+      showNotification('Payout claimed successfully!', 'success');
+
+      if (onRefreshPrediction) {
+        await onRefreshPrediction();
+      } else {
+        window.location.reload();
+      }
+    } catch (error) {
+      console.error('Error claiming:', error);
+      const msg =
+        error?.response?.data?.message ||
+        getBlockchainErrorMessage(error) ||
+        error.message ||
+        'Failed to claim';
+      showNotification(msg, 'error');
+    }
+  };
+
+  const openBoostModal = (optionText = null) => {
+    setSelectedOutcome(optionText);
+    setAmount('');
+    setShowPredictModal(true);
+  };
+
+  const openAddStakeModal = (pred) => {
+    setStakeTargetPrediction(pred);
+    setStakeAmount('');
+    setShowStakeModal(true);
+  };
   
   const getOutcomeOptions = () => {
     if (isPoll) {
@@ -1470,274 +1552,379 @@ const BoostMatchView = ({
             )}
           </div>
 
-          {prediction ? (
-            <div className={`rounded-lg p-6 mb-6 ${hasWon ? 'bg-green-50 dark:bg-green-900' : 'bg-gray-50 dark:bg-gray-700'}`}>
-              <p className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                Your Prediction:{' '}
-                {!isPoll
-                  ? (() => {
-                      const outcome = String(prediction.outcome || '').trim();
-                      if (outcome === 'TeamA' || outcome.toLowerCase() === 'teama') {
-                        return item.teamA || 'Team A';
-                      }
-                      if (outcome === 'TeamB' || outcome.toLowerCase() === 'teamb') {
-                        return item.teamB || 'Team B';
-                      }
-                      if (outcome === 'Draw' || outcome.toLowerCase() === 'draw') {
-                        return 'Draw';
-                      }
-                      return outcome;
-                    })()
-                  : prediction.outcome}
-              </p>
-              {(() => {
-                const stakedEth =
-                  isResolved && !hasWon && prediction.originalStake
-                    ? prediction.originalStake
-                    : (prediction.totalStake || prediction.amount || 0);
-                const netStake = Number(stakedEth) || 0;
-                const potWin =
-                  !isResolved && netStake > 0
-                    ? boostPotentialWin(0, netStake, prediction.outcome)
-                    : null;
-                return (
-                  <div className="mb-2 space-y-1">
-                    <p className="text-gray-600 dark:text-gray-400">
-                      Staked Amount: {formatUsdAmount(netStake)}
-                    </p>
-                    {potWin != null && Number.isFinite(potWin) && (
-                      <p className="font-semibold text-emerald-700 dark:text-emerald-300">
-                        Potential win if correct: {formatUsdAmount(potWin)}
-                      </p>
-                    )}
-                  </div>
-                );
-              })()}
-              {isResolved && (
-                <>
-                  <p className={`text-lg mb-2 ${hasWon ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>
-                    Status: {hasWon ? '✅ Won' : '❌ Lost'}
-                  </p>
-                  {hasWon ? (
-                    prediction.claimed ? (
-                      <div className="mt-4 p-3 bg-gray-100 dark:bg-gray-700 rounded-lg">
-                        <p className="text-sm text-gray-600 dark:text-gray-400">Reward claimed</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                          Payout: {formatUsdAmount(prediction.payout || 0)}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="mt-4">
-                        <div className="mb-2">
-                          <p className="text-gray-600 dark:text-gray-400">
-                            Your Win: {formatUsdAmount(prediction.payout || 0)}
-                          </p>
-                        </div>
-                        <button
-                          onClick={async () => {
-                            try {
-                              if (!item || !item.marketId) {
-                                showNotification('Market not found', 'error');
-                                return;
-                              }
-                              if (!walletAddress) {
-                                showNotification('Connect your wallet (same as on your profile)', 'warning');
-                                return;
-                              }
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700 mb-6 overflow-hidden bg-white dark:bg-gray-800">
 
-                              const { data: auth } = await api.post(`/predictions/${prediction._id}/claim-authorization`, {
-                                walletAddress,
-                              });
+            <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4 bg-gray-50 dark:bg-gray-900/50 border-b border-gray-200 dark:border-gray-700">
 
-                              // Gas-drip before claim if user has no Base ETH for gas.
-                              const okGas = await ensureGasOrDrip(walletAddress, { label: 'claim' });
-                              if (!okGas) return;
+              <div>
 
-                              const txHash =
-                                auth.claimKind === 'orderbook'
-                                  ? await claimOrderbookPositionWithAuth(
-                                      auth.marketId,
-                                      auth.amountWei,
-                                      auth.positionKey,
-                                      auth.predictionId,
-                                      auth.deadline,
-                                      auth.signature
-                                    )
-                                  : await claimPredictionWinsWithAuth(
-                                      auth.marketId,
-                                      auth.isBoost,
-                                      auth.amountWei,
-                                      auth.predictionId,
-                                      auth.deadline,
-                                      auth.signature
-                                    );
-                              showNotification(`Claim sent to blockchain! TX: ${txHash.slice(0, 10)}...`, 'success');
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
 
-                              try {
-                                await api.post('/transactions', {
-                                  action: auth.claimKind === 'boost' ? 'boost_claim' : 'market_claim',
-                                  txHash,
-                                  amount: parseFloat(unitsToUsdc(auth.amountWei)),
-                                  currency: 'USDC',
-                                  itemType: isPoll ? 'poll' : 'match',
-                                  itemId: item._id,
-                                  meta: { predictionId: String(prediction._id) },
-                                });
-                              } catch {
-                                // ignore
-                              }
+                  Total amount boosted
 
-                              await api.post(`/predictions/${prediction._id}/claim`);
-                              showNotification('Payout claimed successfully!', 'success');
-
-                              if (onRefreshPrediction) {
-                                await onRefreshPrediction();
-                              } else {
-                                window.location.reload();
-                              }
-                            } catch (error) {
-                              console.error('Error claiming:', error);
-                              const msg =
-                                error?.response?.data?.message ||
-                                getBlockchainErrorMessage(error) ||
-                                error.message ||
-                                'Failed to claim';
-                              showNotification(msg, 'error');
-                            }
-                          }}
-                          disabled={prediction.claimed}
-                          className={`px-6 py-2 rounded-lg transition-colors ${
-                            prediction.claimed
-                              ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                              : 'bg-green-500 text-white hover:bg-green-600'
-                          }`}
-                        >
-                          {prediction.claimed ? 'Reward Claimed' : 'Claim Rewards'}
-                        </button>
-                      </div>
-                    )
-                  ) : (
-                    <div className="mt-4 p-3 bg-gray-100 dark:bg-gray-700 rounded-lg">
-                      <p className="text-sm text-gray-600 dark:text-gray-400">You did not win this prediction</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                        Your stake was moved to the winning option
-                      </p>
-                    </div>
-                  )}
-                </>
-              )}
-              {canModify && !isResolved && prediction && (
-                <div className="flex flex-wrap gap-2 mt-4">
-                  <button
-                    onClick={() => {
-                      if (!locked) {
-                        setStakeAction('add');
-                        setShowStakeModal(true);
-                      }
-                    }}
-                    disabled={locked}
-                    className={`px-4 py-2 rounded-lg transition-colors ${
-                      locked
-                        ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                        : 'bg-green-500 text-white hover:bg-green-600'
-                    }`}
-                  >
-                    Add Stake
-                  </button>
-                </div>
-              )}
-              {/* Withdraw stake hidden — users may add to boost only */}
-              {/* {canModify && !isResolved && (
-                <div className="flex flex-wrap gap-2 mt-4">
-                  <button
-                    onClick={() => {
-                      if (!locked) {
-                        setSelectedOutcome(prediction.outcome);
-                        setShowPredictModal(true);
-                      }
-                    }}
-                    disabled={locked}
-                    className={`px-4 py-2 rounded-lg transition-colors ${
-                      locked
-                        ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                        : 'bg-blue-500 text-white hover:bg-blue-600'
-                    }`}
-                  >
-                    Update Prediction
-                  </button>
-                  ...
-                </div>
-              )} */}
-              {locked && !isResolved && (
-                <p className="mt-4 px-4 py-2 bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 rounded-lg">
-                  Predictions are locked for this match/poll
                 </p>
+
+                <p className="text-2xl font-bold text-gray-900 dark:text-white tabular-nums">
+
+                  {formatUsdAmount(totalBoosted)}
+
+                </p>
+
+              </div>
+
+              {canModify && (
+
+                <button
+
+                  type="button"
+
+                  onClick={() => openBoostModal(null)}
+
+                  className="px-5 py-2.5 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition-colors"
+
+                >
+
+                  Boost
+
+                </button>
+
               )}
+
             </div>
-          ) : !isResolved ? (
-            <div className="space-y-4">
-              {getOutcomeOptions().map((option) => {
-                const optionText = typeof option === 'string' ? option : option.text;
-                const optionImage = typeof option === 'object' ? option.image : null;
-                return (
-                  <button
-                    key={optionText}
-                    type="button"
-                    onClick={() => {
-                      setSelectedOutcome(optionText);
-                      setShowPredictModal(true);
-                    }}
-                    className="flex w-full items-center justify-center gap-3 rounded-lg bg-gray-100 px-6 py-4 text-lg font-semibold text-gray-900 transition-colors hover:bg-gray-200 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
-                  >
-                    <OutcomeOptionAvatar image={optionImage} label={optionText} sizeClass="w-12 h-12" />
-                    <span>
-                      {optionText} {isPoll ? '' : 'Wins'}
-                    </span>
-                  </button>
-                );
-              })}
+
+
+
+            {isResolved && hasAnyStake && (
+
+              <div
+
+                className={`mx-5 mt-4 rounded-lg p-4 ${
+
+                  hasAnyWin
+
+                    ? 'bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800'
+
+                    : 'bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800'
+
+                }`}
+
+              >
+
+                {hasAnyWin ? (
+
+                  <div className="space-y-3">
+
+                    <p className="font-semibold text-green-800 dark:text-green-200">
+
+                      You won on this prediction!
+
+                    </p>
+
+                    {winningPredictions.map((wp) => (
+
+                      <div key={wp._id} className="flex flex-wrap items-center justify-between gap-3">
+
+                        <div>
+
+                          <p className="text-sm text-gray-700 dark:text-gray-300">
+
+                            {getDisplayOutcome(wp.outcome)}
+
+                          </p>
+
+                          <p className="text-lg font-bold text-green-700 dark:text-green-300 tabular-nums">
+
+                            {formatUsdAmount(wp.payout || 0)}
+
+                          </p>
+
+                        </div>
+
+                        {wp.claimed ? (
+
+                          <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Reward claimed</span>
+
+                        ) : (
+
+                          <button
+
+                            type="button"
+
+                            onClick={() => handleClaimPrediction(wp)}
+
+                            className="px-5 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-semibold"
+
+                          >
+
+                            Claim
+
+                          </button>
+
+                        )}
+
+                      </div>
+
+                    ))}
+
+                  </div>
+
+                ) : (
+
+                  <p className="font-semibold text-red-800 dark:text-red-200">
+
+                    None of your boosted options won this prediction.
+
+                  </p>
+
+                )}
+
+              </div>
+
+            )}
+
+
+
+            <div className="overflow-x-auto">
+
+              <table className="w-full text-sm">
+
+                <thead>
+
+                  <tr className="text-left text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+
+                    <th className="px-5 py-3 font-semibold">Option</th>
+
+                    <th className="px-5 py-3 font-semibold">Amount boosted</th>
+
+                    <th className="px-5 py-3 font-semibold">Potential win</th>
+
+                    <th className="px-5 py-3 font-semibold text-right">Action</th>
+
+                  </tr>
+
+                </thead>
+
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+
+                  {getOutcomeOptions().map((option) => {
+
+                    const optionText = typeof option === 'string' ? option : option.text;
+
+                    const optionImage = typeof option === 'object' ? option.image : null;
+
+                    const pred = findBoostForOption(optionText);
+
+                    const netStake = pred ? Number(pred.totalStake || pred.amount || 0) : 0;
+
+                    const potWin =
+
+                      !isResolved && netStake > 0
+
+                        ? boostPotentialWin(0, netStake, pred?.outcome || optionText)
+
+                        : null;
+
+                    const rowWon = pred && isResolved && isPredictionWon(pred);
+
+                    const rowLost = pred && isResolved && !isPredictionWon(pred);
+
+
+
+                    return (
+
+                      <tr
+
+                        key={optionText}
+
+                        className={
+
+                          rowWon
+
+                            ? 'bg-green-50/60 dark:bg-green-900/10'
+
+                            : rowLost
+
+                              ? 'bg-red-50/40 dark:bg-red-900/10'
+
+                              : ''
+
+                        }
+
+                      >
+
+                        <td className="px-5 py-4">
+
+                          <div className="flex items-center gap-2 font-medium text-gray-900 dark:text-white">
+
+                            <OutcomeOptionAvatar image={optionImage} label={optionText} sizeClass="w-8 h-8" />
+
+                            <span>
+
+                              {optionText}
+
+                              {isPoll ? '' : ' Wins'}
+
+                            </span>
+
+                          </div>
+
+                          {isResolved && pred && (
+
+                            <span
+
+                              className={`mt-1 inline-block text-xs font-semibold ${
+
+                                rowWon ? 'text-green-700 dark:text-green-300' : 'text-red-600 dark:text-red-400'
+
+                              }`}
+
+                            >
+
+                              {rowWon ? 'Won' : 'Lost'}
+
+                            </span>
+
+                          )}
+
+                        </td>
+
+                        <td className="px-5 py-4 tabular-nums text-gray-700 dark:text-gray-300">
+
+                          {netStake > 0 ? formatUsdAmount(netStake) : '—'}
+
+                        </td>
+
+                        <td className="px-5 py-4 tabular-nums">
+
+                          {!isResolved && potWin != null && Number.isFinite(potWin) ? (
+
+                            <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+
+                              {formatUsdAmount(potWin)}
+
+                            </span>
+
+                          ) : isResolved && rowWon ? (
+
+                            <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+
+                              {formatUsdAmount(pred.payout || 0)}
+
+                            </span>
+
+                          ) : (
+
+                            <span className="text-gray-400">—</span>
+
+                          )}
+
+                        </td>
+
+                        <td className="px-5 py-4 text-right">
+
+                          {canModify && pred ? (
+
+                            <button
+
+                              type="button"
+
+                              onClick={() => openAddStakeModal(pred)}
+
+                              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-green-500 text-white hover:bg-green-600"
+
+                            >
+
+                              Add stake
+
+                            </button>
+
+                          ) : canModify && !pred ? (
+
+                            <button
+
+                              type="button"
+
+                              onClick={() => openBoostModal(optionText)}
+
+                              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-purple-600 text-white hover:bg-purple-700"
+
+                            >
+
+                              Boost
+
+                            </button>
+
+                          ) : isResolved && rowWon && !pred.claimed ? (
+
+                            <button
+
+                              type="button"
+
+                              onClick={() => handleClaimPrediction(pred)}
+
+                              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-green-500 text-white hover:bg-green-600"
+
+                            >
+
+                              Claim
+
+                            </button>
+
+                          ) : null}
+
+                        </td>
+
+                      </tr>
+
+                    );
+
+                  })}
+
+                </tbody>
+
+              </table>
+
             </div>
-          ) : (
-            <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-6">
-              <p className="text-gray-600 dark:text-gray-400">This {isPoll ? 'poll' : 'match'} has been resolved. Predictions are closed.</p>
-            </div>
-          )}
+
+
+
+            {locked && !isResolved && (
+
+              <p className="mx-5 my-4 px-4 py-2 bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 rounded-lg text-sm">
+
+                Predictions are locked for this match/poll
+
+              </p>
+
+            )}
+
+          </div>
+
+
 
           {showPredictModal && (
-            <Modal isOpen={true} onClose={() => setShowPredictModal(false)} title={prediction ? "Update Boost Prediction" : "Enter Boost Prediction"}>
+            <Modal isOpen={true} onClose={() => setShowPredictModal(false)} title="Boost">
               <div className="space-y-4">
-                {prediction && (
-                  <div className="bg-blue-50 dark:bg-blue-900 rounded-lg p-4 mb-4">
-                    <p className="text-sm text-gray-700 dark:text-gray-300">
-                      <strong>Current Stake:</strong> {(prediction.totalStake || prediction.amount || 0).toFixed(4)} USDC
-                    </p>
-                    <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                      Your stake amount will be automatically preserved when you update the outcome.
-                    </p>
-                  </div>
-                )}
-                <p className="text-gray-700 dark:text-gray-300 mb-4">
-                  {prediction ? "Select a new outcome:" : "Select your prediction:"}
-                </p>
+                <p className="text-gray-700 dark:text-gray-300 mb-4">Select an option to boost:</p>
                 <div className="space-y-2">
-                  {getOutcomeOptions().map((option, index) => {
+                  {getOutcomeOptions().map((option) => {
                     const optionText = typeof option === 'string' ? option : option.text;
                     const optionImage = typeof option === 'object' ? option.image : null;
+                    const existing = findBoostForOption(optionText);
                     return (
                       <button
                         key={optionText}
+                        type="button"
                         onClick={() => {
-                          if (!locked) {
-                            setSelectedOutcome(optionText);
-                          }
+                          if (!locked) setSelectedOutcome(optionText);
                         }}
                         disabled={locked}
                         className={`w-full px-4 py-3 rounded-lg font-semibold transition-colors flex items-center justify-center gap-3 ${
                           locked
                             ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                             : selectedOutcome === optionText
-                            ? 'bg-blue-500 text-white'
-                            : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                              ? 'bg-purple-600 text-white'
+                              : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                         }`}
                       >
                         {optionImage === 'draw-icon' ? (
@@ -1745,15 +1932,18 @@ const BoostMatchView = ({
                         ) : optionImage ? (
                           <img src={optionImage} alt={optionText} className="w-8 h-8 object-cover rounded-full" />
                         ) : null}
-                        <span>{optionText} {isPoll ? '' : 'Wins'}</span>
+                        <span>
+                          {optionText} {isPoll ? '' : 'Wins'}
+                          {existing ? ` · ${formatUsdAmount(existing.totalStake || existing.amount || 0)} staked` : ''}
+                        </span>
                       </button>
                     );
                   })}
                 </div>
-                {!prediction && selectedOutcome && (
+                {selectedOutcome && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    USDC Amount
+                      USDC amount
                     </label>
                     <input
                       type="number"
@@ -1764,9 +1954,7 @@ const BoostMatchView = ({
                       className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
                       required
                     />
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      {formatUsdAmount(amount || 0)}
-                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{formatUsdAmount(amount || 0)}</p>
                     {amount && parseFloat(amount) > 0 && (
                       <div className="mt-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-800 text-xs space-y-1">
                         <p className="text-gray-700 dark:text-gray-300">
@@ -1779,9 +1967,6 @@ const BoostMatchView = ({
                         <p className="text-amber-800 dark:text-amber-200">
                           Golden tickets earned: <strong>+{goldenTicketsForStake(amount)} ⭐</strong>
                         </p>
-                        <p className="text-gray-600 dark:text-gray-400">
-                          Share of boost pool ({formatUsdAmount(effectiveBoostPool)}) if your pick wins.
-                        </p>
                         <p className="text-gray-500 dark:text-gray-500">
                           Fees on stake: {platformFeePct}% platform • {jackpotFeePct}% free jackpot
                         </p>
@@ -1791,34 +1976,30 @@ const BoostMatchView = ({
                 )}
                 <div className="text-sm text-gray-600 dark:text-gray-400">
                   <p>{platformFeePct}% platform fee • {jackpotFeePct}% to free jackpot pool</p>
-                  <p>Game locks at kickoff</p>
+                  <p>Fees apply on every boost and add-stake</p>
                 </div>
                 <div className="flex space-x-2">
                   <button
+                    type="button"
                     onClick={() => {
-                      if (!locked) {
-                        if (prediction && selectedOutcome) {
-                          // Update existing prediction - amount is automatically preserved
-                          onPredict(selectedOutcome);
-                          setShowPredictModal(false);
-                        } else if (selectedOutcome && amount) {
-                          // Create new prediction
-                          onPredict(selectedOutcome, amount);
-                          setShowPredictModal(false);
-                          setAmount('');
-                        }
+                      if (!locked && selectedOutcome && amount) {
+                        onPredict(selectedOutcome, amount);
+                        setShowPredictModal(false);
+                        setAmount('');
+                        setSelectedOutcome(null);
                       }
                     }}
-                    disabled={locked || !selectedOutcome || (!prediction && !amount)}
+                    disabled={locked || !selectedOutcome || !amount}
                     className={`flex-1 px-4 py-2 rounded-lg ${
                       locked
                         ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                        : 'bg-blue-500 text-white hover:bg-blue-600'
+                        : 'bg-purple-600 text-white hover:bg-purple-700'
                     } disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
-                    {prediction ? 'Update' : 'Confirm'}
+                    Confirm boost
                   </button>
                   <button
+                    type="button"
                     onClick={() => {
                       setShowPredictModal(false);
                       setAmount('');
@@ -1833,15 +2014,28 @@ const BoostMatchView = ({
             </Modal>
           )}
 
-          {showStakeModal && prediction && (
-            <Modal isOpen={true} onClose={() => setShowStakeModal(false)} title="Add Stake">
+          {showStakeModal && stakeTargetPrediction && (
+            <Modal
+              isOpen={true}
+              onClose={() => {
+                setShowStakeModal(false);
+                setStakeTargetPrediction(null);
+              }}
+              title="Add stake"
+            >
               <div className="space-y-4">
                 <p className="text-gray-700 dark:text-gray-300">
-                  Current Stake: <strong>{(prediction.totalStake || prediction.amount || 0).toFixed(4)} USDC</strong>
+                  Option: <strong>{getDisplayOutcome(stakeTargetPrediction.outcome)}</strong>
+                </p>
+                <p className="text-gray-700 dark:text-gray-300">
+                  Current stake:{' '}
+                  <strong>
+                    {formatUsdAmount(stakeTargetPrediction.totalStake || stakeTargetPrediction.amount || 0)}
+                  </strong>
                 </p>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Amount to Add
+                    Amount to add
                   </label>
                   <input
                     type="number"
@@ -1858,14 +2052,21 @@ const BoostMatchView = ({
                       <> · Golden tickets: +{goldenTicketsForStake(stakeAmount)} ⭐</>
                     ) : null}
                   </p>
+                  {stakeAmount && parseFloat(stakeAmount) > 0 && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                      Fees: {platformFeePct}% platform • {jackpotFeePct}% free jackpot
+                    </p>
+                  )}
                 </div>
                 <div className="flex space-x-2">
                   <button
+                    type="button"
                     onClick={() => {
                       if (!locked && stakeAmount) {
-                        onStakeAction(prediction._id, 'add', stakeAmount);
+                        onStakeAction(stakeTargetPrediction._id, 'add', stakeAmount);
                         setShowStakeModal(false);
                         setStakeAmount('');
+                        setStakeTargetPrediction(null);
                       }
                     }}
                     disabled={locked}
@@ -1878,9 +2079,11 @@ const BoostMatchView = ({
                     Add
                   </button>
                   <button
+                    type="button"
                     onClick={() => {
                       setShowStakeModal(false);
                       setStakeAmount('');
+                      setStakeTargetPrediction(null);
                     }}
                     className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
                   >

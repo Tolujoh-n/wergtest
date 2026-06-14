@@ -1125,6 +1125,7 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
     drawEnabled: true,
     minFreeTickets: 1,
     freePredictionEnabled: true,
+    marketEnabled: true,
     // YES/NO seed liquidity per outcome (orderbook reference liquidity)
     teamAYes: '',
     teamANo: '',
@@ -1217,6 +1218,7 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
         stageName: selectedStage?.name || formData.stageName,
         minFreeTickets: parseInt(formData.minFreeTickets, 10) || 1,
         freePredictionEnabled: formData.freePredictionEnabled,
+        marketEnabled: formData.marketEnabled,
         drawEnabled: formData.drawEnabled,
         startingPrices,
         teamAYes: parseFloat(formData.teamAYes) || 0,
@@ -1354,6 +1356,10 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={formData.freePredictionEnabled} onChange={(e) => setFormData({ ...formData, freePredictionEnabled: e.target.checked })} />
               <span className="text-sm text-gray-700 dark:text-gray-300">Free prediction enabled</span>
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={formData.marketEnabled} onChange={(e) => setFormData({ ...formData, marketEnabled: e.target.checked })} />
+              <span className="text-sm text-gray-700 dark:text-gray-300">Market enabled</span>
             </label>
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={formData.drawEnabled} onChange={(e) => setFormData({ ...formData, drawEnabled: e.target.checked })} />
@@ -1983,6 +1989,7 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
     optionType: 'options',
     minFreeTickets: 1,
     freePredictionEnabled: true,
+    marketEnabled: true,
     isFeatured: false,
     isSponsored: false,
     sponsoredImages: [],
@@ -2092,6 +2099,7 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
         isFeatured: formData.isFeatured || false,
         minFreeTickets: parseInt(formData.minFreeTickets, 10) || 1,
         freePredictionEnabled: formData.freePredictionEnabled,
+        marketEnabled: formData.marketEnabled,
         startingPrices,
       };
 
@@ -2168,10 +2176,16 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
               <button type="button" onClick={() => setFormData((f) => ({ ...f, minFreeTickets: (parseInt(f.minFreeTickets, 10) || 1) + 1 }))} className="w-10 h-10 border rounded-lg font-bold">+</button>
             </div>
           </div>
-          <label className="flex items-center gap-2 self-end">
-            <input type="checkbox" checked={formData.freePredictionEnabled} onChange={(e) => setFormData({ ...formData, freePredictionEnabled: e.target.checked })} />
-            <span className="text-sm text-gray-700 dark:text-gray-300">Free prediction enabled</span>
-          </label>
+          <div className="space-y-2 self-end">
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={formData.freePredictionEnabled} onChange={(e) => setFormData({ ...formData, freePredictionEnabled: e.target.checked })} />
+              <span className="text-sm text-gray-700 dark:text-gray-300">Free prediction enabled</span>
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={formData.marketEnabled} onChange={(e) => setFormData({ ...formData, marketEnabled: e.target.checked })} />
+              <span className="text-sm text-gray-700 dark:text-gray-300">Market enabled</span>
+            </label>
+          </div>
         </div>
         
         {/* Poll Options (option-based only; per-option YES/NO liquidity) */}
@@ -4868,6 +4882,7 @@ const EditMatchModal = ({ match, cups, stages, onClose, onSubmit }) => {
     isFeatured: match.isFeatured || false,
     isSponsored: match.isSponsored || false,
     freePredictionEnabled: match.freePredictionEnabled !== false,
+    marketEnabled: match.marketEnabled !== false,
     sponsoredImages: match.sponsoredImages || [],
     lockedTime: match.lockedTime ? new Date(match.lockedTime).toISOString().slice(0, 16) : '',
     teamAImage: match.teamAImage || '',
@@ -4992,6 +5007,15 @@ const EditMatchModal = ({ match, cups, stages, onClose, onSubmit }) => {
               className="mr-2"
             />
             <span className="text-gray-700 dark:text-gray-300">Free prediction enabled</span>
+          </label>
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={formData.marketEnabled}
+              onChange={(e) => setFormData({ ...formData, marketEnabled: e.target.checked })}
+              className="mr-2"
+            />
+            <span className="text-gray-700 dark:text-gray-300">Market enabled</span>
           </label>
         </div>
         
@@ -5162,6 +5186,8 @@ const EditPollModal = ({ poll, cups, onClose, onSubmit }) => {
     cup: poll.cup?._id || poll.cup || '',
     isFeatured: poll.isFeatured || false,
     isSponsored: poll.isSponsored || false,
+    freePredictionEnabled: poll.freePredictionEnabled !== false,
+    marketEnabled: poll.marketEnabled !== false,
     sponsoredImages: poll.sponsoredImages || [],
     lockedTime: poll.lockedTime ? new Date(poll.lockedTime).toISOString().slice(0, 16) : '',
     optionType: 'options',
@@ -5257,6 +5283,25 @@ const EditPollModal = ({ poll, cups, onClose, onSubmit }) => {
             <option key={cup._id} value={cup._id}>{cup.name}</option>
           ))}
         </select>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={formData.freePredictionEnabled}
+              onChange={(e) => setFormData({ ...formData, freePredictionEnabled: e.target.checked })}
+            />
+            <span className="text-sm text-gray-700 dark:text-gray-300">Free prediction enabled</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={formData.marketEnabled}
+              onChange={(e) => setFormData({ ...formData, marketEnabled: e.target.checked })}
+            />
+            <span className="text-sm text-gray-700 dark:text-gray-300">Market enabled</span>
+          </label>
+        </div>
         
         {/* Poll Options (option-based only) */}
         <div className="space-y-4">
