@@ -101,6 +101,27 @@ const TargetOddsInputs = ({ rows, onUpdateRows, getLabel, compact = false, balan
               <p className="text-[11px] text-gray-500 mt-1.5">
                 YES mid ≈ {yesMid.toFixed(2)} · NO ≈ {(1 - yesMid).toFixed(2)}
               </p>
+              <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                <label className="block text-[11px] text-gray-500 mb-1">Starting book volume (USDC)</label>
+                <input
+                  type="number"
+                  min="10"
+                  step="10"
+                  value={row.quoteVolumeUsdc ?? 200}
+                  onChange={(e) => {
+                    const vol = Math.max(10, Number(e.target.value) || 200);
+                    onUpdateRows(
+                      rows.map((r) =>
+                        String(r.optionKey) === String(row.optionKey)
+                          ? { ...r, quoteVolumeUsdc: vol }
+                          : r
+                      )
+                    );
+                  }}
+                  className="w-full px-2 py-1.5 rounded border dark:bg-gray-700 dark:text-white text-sm"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">YES/NO split 50/50 · 3 bids + 3 asks per side</p>
+              </div>
             </div>
           );
         })}

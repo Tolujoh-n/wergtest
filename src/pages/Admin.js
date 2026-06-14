@@ -1995,7 +1995,7 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
     setFormData((prev) => {
       const newOptions = [
         ...prev.options,
-        { text: '', image: '', yesLiquidity: '', noLiquidity: '', targetPct: 0 },
+        { text: '', image: '', yesLiquidity: '', noLiquidity: '', targetPct: 0, quoteVolumeUsdc: 200 },
       ];
       const keys = newOptions.map((_, i) => `__idx_${i}`);
       const balanceKey = keys[keys.length - 1];
@@ -2042,15 +2042,20 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
   const pollOddsRows = formData.options.map((opt, i) => ({
     optionKey: `__idx_${i}`,
     pct: Number(opt.targetPct) || 0,
+    quoteVolumeUsdc: Number(opt.quoteVolumeUsdc) || 200,
   }));
 
   const updatePollOdds = (rows) => {
     setFormData((prev) => ({
       ...prev,
-      options: prev.options.map((opt, i) => ({
-        ...opt,
-        targetPct: rows.find((r) => r.optionKey === `__idx_${i}`)?.pct ?? opt.targetPct,
-      })),
+      options: prev.options.map((opt, i) => {
+        const row = rows.find((r) => r.optionKey === `__idx_${i}`);
+        return {
+          ...opt,
+          targetPct: row?.pct ?? opt.targetPct,
+          quoteVolumeUsdc: row?.quoteVolumeUsdc ?? opt.quoteVolumeUsdc ?? 200,
+        };
+      }),
     }));
   };
 
@@ -2067,6 +2072,7 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
       const pctRows = formData.options.map((opt, i) => ({
         optionKey: `__idx_${i}`,
         pct: Number(opt.targetPct) || 0,
+        quoteVolumeUsdc: Number(opt.quoteVolumeUsdc) || 200,
       }));
       const priceRows = startingPricesFromPctRows(pctRows);
       const startingPrices = priceRows.map((sp, i) => ({

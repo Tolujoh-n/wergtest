@@ -543,13 +543,20 @@ const MatchDetail = () => {
         // Then update backend only after blockchain success
         const actualPredictionId = prediction?._id || predictionId;
         const linked = await ensureLinkedWallet();
-        await api.post(`/predictions/boost/${actualPredictionId}/stake`, {
+        const { data: stakeResult } = await api.post(`/predictions/boost/${actualPredictionId}/stake`, {
           action,
           amount: parseFloat(amount),
           walletAddress: linked || undefined,
           txHash: txHash || undefined,
         });
-        showNotification(`Stake ${action === 'add' ? 'added' : 'withdrawn'} successfully!`, 'success');
+        if (action === 'add' && Number(stakeResult?.goldenTicketsAwarded) > 0) {
+          showNotification(
+            `Stake added! +${stakeResult.goldenTicketsAwarded} golden ticket${stakeResult.goldenTicketsAwarded === 1 ? '' : 's'} earned`,
+            'success'
+          );
+        } else {
+          showNotification(`Stake ${action === 'add' ? 'added' : 'withdrawn'} successfully!`, 'success');
+        }
         await fetchUserPrediction();
         await fetchData();
       } catch (blockchainError) {
@@ -1179,7 +1186,7 @@ const BoostMatchView = ({
   const [showStakeModal, setShowStakeModal] = useState(false);
   const [selectedOutcome, setSelectedOutcome] = useState(null);
   const [amount, setAmount] = useState('');
-  const [stakeAction] = useState('add'); // 'add' or 'withdraw' (setter intentionally unused)
+  const [stakeAction, setStakeAction] = useState('add');
   const [stakeAmount, setStakeAmount] = useState('');
   const [fees, setFees] = useState({ platformFee: 10, boostJackpotFee: 5 });
   const [goldenRanges, setGoldenRanges] = useState([]);
@@ -1199,6 +1206,9 @@ const BoostMatchView = ({
         : `/predictions/match/${itemId}/boost-stats`;
       const { data } = await api.get(path);
       setBoostStats(data);
+      if (Array.isArray(data?.goldenTicketBoostRanges)) {
+        setGoldenRanges(data.goldenTicketBoostRanges);
+      }
     } catch (error) {
       console.warn('boost-stats', error?.message || error);
     }
@@ -1226,7 +1236,13 @@ const BoostMatchView = ({
     if (amt <= 0 || !goldenRanges.length) return 0;
     for (const r of goldenRanges) {
       const min = Number(r.minUsdc) || 0;
-      const max = Number(r.maxUsdc) || Infinity;
+      const maxRaw = r.maxUsdc;
+      const max =
+        maxRaw == null || maxRaw === ''
+          ? Infinity
+          : Number.isFinite(Number(maxRaw))
+            ? Number(maxRaw)
+            : Infinity;
       const tickets = parseInt(r.tickets, 10) || 0;
       if (amt >= min && amt <= max) return tickets;
     }
@@ -1289,7 +1305,7 @@ const BoostMatchView = ({
     (prediction.status === 'settled' && (prediction.payout || 0) > 0) ||
     ((prediction.payout || 0) > 0 && prediction.status !== 'lost')
   );
-  // const canModify = !locked && !isResolved && (item.status === 'upcoming' || item.status === 'active');
+  const canModify = !locked && !isResolved && (item.status === 'upcoming' || item.status === 'active');
   
   const getOutcomeOptions = () => {
     if (isPoll) {
@@ -1610,6 +1626,27 @@ const BoostMatchView = ({
                   )}
                 </>
               )}
+              {canModify && !isResolved && prediction && (
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <button
+                    onClick={() => {
+                      if (!locked) {
+                        setStakeAction('add');
+                        setShowStakeModal(true);
+                      }
+                    }}
+                    disabled={locked}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      locked
+                        ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                        : 'bg-green-500 text-white hover:bg-green-600'
+                    }`}
+                  >
+                    Add Stake
+                  </button>
+                </div>
+              )}
+              {/* Withdraw stake hidden — users may add to boost only */}
               {/* {canModify && !isResolved && (
                 <div className="flex flex-wrap gap-2 mt-4">
                   <button
@@ -1628,38 +1665,7 @@ const BoostMatchView = ({
                   >
                     Update Prediction
                   </button>
-                  <button
-                    onClick={() => {
-                      if (!locked) {
-                        setStakeAction('add');
-                        setShowStakeModal(true);
-                      }
-                    }}
-                    disabled={locked}
-                    className={`px-4 py-2 rounded-lg transition-colors ${
-                      locked
-                        ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                        : 'bg-green-500 text-white hover:bg-green-600'
-                    }`}
-                  >
-                    Add Stake
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!locked) {
-                        setStakeAction('withdraw');
-                        setShowStakeModal(true);
-                      }
-                    }}
-                    disabled={locked}
-                    className={`px-4 py-2 rounded-lg transition-colors ${
-                      locked
-                        ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                        : 'bg-orange-500 text-white hover:bg-orange-600'
-                    }`}
-                  >
-                    Withdraw Stake
-                  </button>
+                  ...
                 </div>
               )} */}
               {locked && !isResolved && (
@@ -1828,19 +1834,19 @@ const BoostMatchView = ({
           )}
 
           {showStakeModal && prediction && (
-            <Modal isOpen={true} onClose={() => setShowStakeModal(false)} title={stakeAction === 'add' ? 'Add Stake' : 'Withdraw Stake'}>
+            <Modal isOpen={true} onClose={() => setShowStakeModal(false)} title="Add Stake">
               <div className="space-y-4">
                 <p className="text-gray-700 dark:text-gray-300">
                   Current Stake: <strong>{(prediction.totalStake || prediction.amount || 0).toFixed(4)} USDC</strong>
                 </p>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    {stakeAction === 'add' ? 'Amount to Add' : 'Amount to Withdraw'}
+                    Amount to Add
                   </label>
                   <input
                     type="number"
                     step="0.01"
-                    placeholder={`USDC Amount (Max: ${stakeAction === 'withdraw' ? (prediction.totalStake || prediction.amount || 0).toFixed(4) : 'unlimited'})`}
+                    placeholder="USDC amount"
                     value={stakeAmount}
                     onChange={(e) => setStakeAmount(e.target.value)}
                     className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
@@ -1848,24 +1854,16 @@ const BoostMatchView = ({
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                     {formatUsdAmount(stakeAmount || 0)}
+                    {stakeAmount && goldenTicketsForStake(stakeAmount) > 0 ? (
+                      <> · Golden tickets: +{goldenTicketsForStake(stakeAmount)} ⭐</>
+                    ) : null}
                   </p>
                 </div>
-                {stakeAction === 'withdraw' && (
-                  <button
-                    onClick={() => {
-                      const maxAmount = (prediction.totalStake || prediction.amount || 0).toFixed(4);
-                      setStakeAmount(maxAmount);
-                    }}
-                    className="w-full px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
-                  >
-                    Max
-                  </button>
-                )}
                 <div className="flex space-x-2">
                   <button
                     onClick={() => {
                       if (!locked && stakeAmount) {
-                        onStakeAction(prediction._id, stakeAction, stakeAmount);
+                        onStakeAction(prediction._id, 'add', stakeAmount);
                         setShowStakeModal(false);
                         setStakeAmount('');
                       }
@@ -1874,12 +1872,10 @@ const BoostMatchView = ({
                     className={`flex-1 px-4 py-2 rounded-lg ${
                       locked
                         ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                        : stakeAction === 'add' 
-                        ? 'bg-green-500 text-white hover:bg-green-600' 
-                        : 'bg-orange-500 text-white hover:bg-orange-600'
+                        : 'bg-green-500 text-white hover:bg-green-600'
                     }`}
                   >
-                    {stakeAction === 'add' ? 'Add' : 'Withdraw'}
+                    Add
                   </button>
                   <button
                     onClick={() => {

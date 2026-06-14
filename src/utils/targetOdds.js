@@ -11,6 +11,7 @@ export function pctRowsFromStartingPrices(rows) {
   return rows.map((r, i) => ({
     optionKey: r.optionKey,
     pct: Math.round((yesPrices[i] / sum) * 10000) / 100,
+    quoteVolumeUsdc: Number(r.quoteVolumeUsdc) || 200,
   }));
 }
 
@@ -44,7 +45,7 @@ export function evenPctSplit(optionKeys) {
   const keys = (optionKeys || []).filter(Boolean);
   if (!keys.length) return [];
   const base = Math.floor((100 / keys.length) * 100) / 100;
-  const rows = keys.map((optionKey) => ({ optionKey, pct: base }));
+  const rows = keys.map((optionKey) => ({ optionKey, pct: base, quoteVolumeUsdc: 200 }));
   rows[rows.length - 1].pct = Math.round((100 - base * (keys.length - 1)) * 100) / 100;
   return rows;
 }
@@ -153,6 +154,9 @@ export function startingPricesFromPctRows(rows) {
       optionKey: r.optionKey,
       yesPrice: Math.round(yes * 10000) / 10000,
       noPrice: Math.round(no * 10000) / 10000,
+      quoteVolumeUsdc: Math.max(10, Number(r.quoteVolumeUsdc) || 200),
+      yesQuoteVolumeUsdc: Math.max(5, (Number(r.quoteVolumeUsdc) || 200) / 2),
+      noQuoteVolumeUsdc: Math.max(5, (Number(r.quoteVolumeUsdc) || 200) / 2),
     };
   });
 }

@@ -43,6 +43,7 @@ function buildStartingPriceRows(item, kind) {
       optionKey,
       yesPrice: Number(row.yesPrice ?? 0.5),
       noPrice: Number(row.noPrice ?? 0.5),
+      quoteVolumeUsdc: Number(row.quoteVolumeUsdc) || 200,
     };
   });
 }

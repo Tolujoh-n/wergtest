@@ -538,12 +538,18 @@ export default function OrderbookTradePanel({
 
       const { data: placed } = await api.post('/orderbook/orders', payload());
       const filled = Number(placed?.sizeFilled) || 0;
+      const remaining = Number(placed?.sizeRemaining) || 0;
       const st = String(placed?.status || '').toLowerCase();
-      if (st === 'filled' || filled > 0) {
+      if (remaining > 1e-6 && filled > 0) {
+        showNotification(
+          `Partially filled ${filled.toFixed(4)} shares (${remaining.toFixed(4)} remaining) — retry or use a limit order`,
+          'warning'
+        );
+      } else if (st === 'filled' || filled > 0) {
         showNotification(
           filled > 0
-            ? `Filled ${filled.toFixed(4)} shares — check Positions below`
-            : 'Order filled — check Positions below',
+            ? `Filled ${filled.toFixed(4)} shares`
+            : 'Order filled',
           'success'
         );
       } else {
@@ -553,10 +559,12 @@ export default function OrderbookTradePanel({
       setUsdcNotional('');
       lastBookFpRef.current = '';
       lastVaultFpRef.current = '';
-      await refreshVault();
-      await refreshBook();
-      await new Promise((r) => setTimeout(r, 200));
-      await onOrderPlaced?.({ force: true, order: placed });
+      setSubmitting(false);
+      refreshVault().catch(() => {});
+      refreshBook().catch(() => {});
+      if (typeof onOrderPlaced === 'function') {
+        Promise.resolve(onOrderPlaced({ force: true, order: placed })).catch(() => {});
+      }
     } catch (e) {
       const data = e?.response?.data;
       if (data?.code === 'INSUFFICIENT_VAULT' && data.details && direction === 'buy' && addr) {
@@ -570,10 +578,12 @@ export default function OrderbookTradePanel({
           setUsdcNotional('');
           lastBookFpRef.current = '';
           lastVaultFpRef.current = '';
-          await refreshVault();
-          await refreshBook();
-          await new Promise((r) => setTimeout(r, 200));
-          await onOrderPlaced?.({ force: true, order: placed });
+          setSubmitting(false);
+          refreshVault().catch(() => {});
+          refreshBook().catch(() => {});
+          if (typeof onOrderPlaced === 'function') {
+            Promise.resolve(onOrderPlaced({ force: true, order: placed })).catch(() => {});
+          }
           return;
         } catch (e2) {
           showNotification(e2?.response?.data?.message || e2?.message || 'Order failed after deposit', 'error');

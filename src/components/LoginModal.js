@@ -27,6 +27,8 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
 
     try {
       await login(identifier, password);
+      dismissNotification(loadingToastId);
+      setLoading(false);
       showNotification('Login successful!', 'success');
       onClose();
     } catch (err) {

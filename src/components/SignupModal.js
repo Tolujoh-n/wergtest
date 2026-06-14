@@ -34,6 +34,8 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
 
     try {
       await signup(email, password, username);
+      dismissNotification(loadingToastId);
+      setLoading(false);
       showNotification('Sign up successful!', 'success');
       onClose();
     } catch (err) {

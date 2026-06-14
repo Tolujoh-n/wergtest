@@ -89,13 +89,16 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('token', response.data.token);
     touchActivity();
     setUser(response.data.user);
+    refreshUser().catch(() => {});
     return response.data;
   };
 
   const signup = async (email, password, username) => {
     const response = await api.post('/auth/signup', { email, password, username });
     localStorage.setItem('token', response.data.token);
+    touchActivity();
     setUser(response.data.user);
+    refreshUser().catch(() => {});
     return response.data;
   };
 
@@ -104,6 +107,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('token', response.data.token);
     touchActivity();
     setUser(response.data.user);
+    refreshUser().catch(() => {});
     return response.data;
   };
 
@@ -114,6 +118,7 @@ export const AuthProvider = ({ children }) => {
         localStorage.setItem('token', response.data.token);
         touchActivity();
         setUser(response.data.user);
+        refreshUser().catch(() => {});
       }
       setWalletAddress(address);
       return response.data;
@@ -123,6 +128,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('token', signupResponse.data.token);
       touchActivity();
       setUser(signupResponse.data.user);
+      refreshUser().catch(() => {});
       setWalletAddress(address);
       return signupResponse.data;
     }
