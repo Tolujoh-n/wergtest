@@ -348,7 +348,7 @@ export default function OrderbookTradePanel({
 
   useEffect(() => {
     refreshBook();
-    const t = setInterval(refreshBook, 5000);
+    const t = setInterval(refreshBook, 8000);
     return () => clearInterval(t);
   }, [refreshBook]);
 

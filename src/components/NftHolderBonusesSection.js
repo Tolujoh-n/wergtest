@@ -48,6 +48,9 @@ export default function NftHolderBonusesSection({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           NFT / FT holder bonuses (daily)
+          {verifying && user && (
+            <span className="ml-2 normal-case font-normal text-blue-600 dark:text-blue-400">Updating…</span>
+          )}
         </h3>
         {!account && user && onConnectWallet && (
           <button

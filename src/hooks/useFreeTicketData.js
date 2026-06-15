@@ -35,7 +35,7 @@ export function useFreeTicketData(user, account) {
         if (patch.nftBonuses !== undefined) setNftBonuses(patch.nftBonuses);
         if (patch.balances !== undefined) setBalances(patch.balances);
         if (patch.verifying !== undefined) {
-          setVerifying(isFirstLoad ? patch.verifying : false);
+          setVerifying(patch.verifying);
         }
         if (patch.loaded) {
           loadedRef.current = true;

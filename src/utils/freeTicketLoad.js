@@ -1,8 +1,33 @@
 import api from './api';
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const HOLDINGS_POLL_DELAYS_MS = [2000, 3000, 4000, 5000, 5000, 8000];
+
+async function pollHoldingsUntilFresh(walletParams, signal, onUpdate) {
+  for (const delay of HOLDINGS_POLL_DELAYS_MS) {
+    if (signal?.aborted) return;
+    await sleep(delay);
+    if (signal?.aborted) return;
+    try {
+      const { data: bal } = await api.get('/tickets/balances', { ...walletParams, signal });
+      const list = Array.isArray(bal?.nftBonuses) ? bal.nftBonuses : [];
+      onUpdate?.({
+        nftBonuses: list,
+        balances: bal,
+        verifying: !!bal.holdingsRefreshing,
+        loaded: true,
+      });
+      if (!bal.holdingsRefreshing) return;
+    } catch {
+      /* keep polling */
+    }
+  }
+}
+
 /**
  * Load free-ticket balances + NFT bonus rows (single request when logged in).
- * Keeps prior UI data during background refresh when keepStale is true.
+ * Cached holdings return immediately; on-chain verification continues in the background.
  */
 export async function loadFreeTicketData({ user, account, signal, onUpdate, keepStale = true }) {
   if (!user) {
@@ -20,17 +45,23 @@ export async function loadFreeTicketData({ user, account, signal, onUpdate, keep
   }
 
   const walletParams = account ? { params: { walletAddress: account } } : {};
-  onUpdate?.({ verifying: true });
+  if (!keepStale) {
+    onUpdate?.({ verifying: true });
+  }
 
   try {
     const { data: bal } = await api.get('/tickets/balances', { ...walletParams, signal });
     const list = Array.isArray(bal?.nftBonuses) ? bal.nftBonuses : [];
+    const isRefreshing = !!bal.holdingsRefreshing;
     onUpdate?.({
       nftBonuses: list,
       balances: bal,
-      verifying: false,
+      verifying: isRefreshing,
       loaded: true,
     });
+    if (isRefreshing) {
+      await pollHoldingsUntilFresh(walletParams, signal, onUpdate);
+    }
   } catch {
     onUpdate?.({
       verifying: false,

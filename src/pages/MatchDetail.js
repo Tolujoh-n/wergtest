@@ -2127,6 +2127,9 @@ function fingerprintBooksPair(pair) {
   return `${fingerprintSideBook(pair.YES)}#${fingerprintSideBook(pair.NO)}`;
 }
 
+const MARKET_LIVE_POLL_MS = 8000;
+const MARKET_CHART_MIN_MS = 2000;
+
 const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locked = false, onItemUpdate, ensureLinkedWallet }) => {
   // USDC ~ USD; no ETH conversion hints
   const { account } = useWallet();
@@ -2161,6 +2164,12 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
   const [prices, setPrices] = useState({});
   const [priceAmounts, setPriceAmounts] = useState({}); // ETH amounts for each option
   const [currentItem, setCurrentItem] = useState(item);
+  const [serverImpliedPrices, setServerImpliedPrices] = useState(null);
+  const marketPollInFlightRef = useRef(false);
+  const pageVisibleRef = useRef(true);
+  const lastChartRenderMsRef = useRef(0);
+  const chartThrottleTimerRef = useRef(null);
+  const lastSnapshotSigRef = useRef('');
 
   // Computed value for itemData - always use currentItem if available, fallback to item
   const itemData = currentItem || item;
@@ -2226,30 +2235,17 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       const chainMarketId = itemData?.marketId;
       if (!chainMarketId || !outcomeRows.length) return;
       try {
-        const results = await Promise.all(
-          outcomeRows.map(async (row) => {
-            const key = row.key;
-            try {
-              const [yesRes, noRes] = await Promise.all([
-                api.get(`/orderbook/book/${chainMarketId}`, { params: { optionKey: key, side: 'YES' } }),
-                api.get(`/orderbook/book/${chainMarketId}`, { params: { optionKey: key, side: 'NO' } }),
-              ]);
-              return [
-                key,
-                {
-                  YES: yesRes.data || { bids: [], asks: [] },
-                  NO: noRes.data || { bids: [], asks: [] },
-                },
-              ];
-            } catch {
-              return [key, { YES: { bids: [], asks: [] }, NO: { bids: [], asks: [] } }];
-            }
-          })
-        );
+        const keys = outcomeRows.map((r) => r.key).join(',');
+        const { data } = await api.get(`/orderbook/market/${chainMarketId}/snapshot`, {
+          params: {
+            optionKeys: keys,
+            startingPrices: JSON.stringify(itemData.startingPrices || []),
+          },
+        });
         setBooksByOption((prev) => {
           let changed = false;
           const next = { ...prev };
-          for (const [k, v] of results) {
+          for (const [k, v] of Object.entries(data.booksByOption || {})) {
             const fp = fingerprintBooksPair(v);
             if (!force && fingerprintBooksPair(prev[k]) === fp) continue;
             next[k] = v;
@@ -2257,11 +2253,16 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
           }
           return changed ? next : prev;
         });
+        if (data?.impliedNow) {
+          setServerImpliedPrices((prev) =>
+            JSON.stringify(prev) === JSON.stringify(data.impliedNow) ? prev : data.impliedNow
+          );
+        }
       } catch {
         // ignore
       }
     },
-    [itemData?.marketId, outcomeRows]
+    [itemData?.marketId, itemData.startingPrices, outcomeRows]
   );
 
   const orderbookOptionLabelByKey = useMemo(() => new Map(outcomeRows.map((o) => [o.key, o.label])), [outcomeRows]);
@@ -2416,17 +2417,20 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
   }, [outcomeRows, bookMidPrice, itemData.startingPrices]);
 
   const outcomeImpliedPrices = useMemo(() => {
+    if (serverImpliedPrices && Object.keys(serverImpliedPrices).length > 0) {
+      return serverImpliedPrices;
+    }
     const sum = Object.values(outcomeImpliedRaw).reduce((a, b) => a + b, 0) || 1;
     const out = {};
     for (const [k, v] of Object.entries(outcomeImpliedRaw)) out[k] = v / sum;
     return out;
-  }, [outcomeImpliedRaw]);
+  }, [serverImpliedPrices, outcomeImpliedRaw]);
 
   const rankedOutcomeRows = useMemo(() => {
     return [...outcomeRows]
       .map((row) => ({
         ...row,
-        volumePct: (outcomeImpliedPrices[row.key] ?? 0) * 100,
+        volumePct: Math.round((outcomeImpliedPrices[row.key] ?? 0) * 1000) / 10,
       }))
       .sort((a, b) => b.volumePct - a.volumePct);
   }, [outcomeRows, outcomeImpliedPrices]);
@@ -2493,6 +2497,8 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
 
   useEffect(() => {
     lastMarketPollSig.current = '';
+    lastSnapshotSigRef.current = '';
+    setServerImpliedPrices(null);
     chartHistoryRef.current = [];
     lastChartPointSigRef.current = '';
     positionsEverLoadedRef.current = false;
@@ -2681,8 +2687,10 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     setCurrentItem(item);
   }, [item]);
 
-  // Calculate prices and price amounts (ETH) based on liquidity
+  // Legacy AMM liquidity prices — only when no on-chain orderbook market
   useEffect(() => {
+    if (itemData?.marketId) return;
+
     let calculatedPrices = {};
     let calculatedPriceAmounts = {};
     let totalLiquidity = 0;
@@ -2741,27 +2749,11 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       }
       calculatedPriceAmounts.teamA = teamALiq;
       calculatedPriceAmounts.teamB = teamBLiq;
-      
-      // Debug logging for matches
-      console.log('Match Price Calculation:', {
-        teamALiq,
-        teamBLiq,
-        drawLiq,
-        totalLiquidity,
-        prices: calculatedPrices,
-        priceSum: calculatedPrices.teamA + calculatedPrices.teamB + calculatedPrices.draw
-      });
     }
     
     setPrices(calculatedPrices);
     setPriceAmounts(calculatedPriceAmounts);
-    
-    // Debug: Log price sum to verify it equals 1.0
-    const priceSum = Object.values(calculatedPrices).reduce((sum, price) => sum + price, 0);
-    if (Math.abs(priceSum - 1.0) > 0.01) {
-      console.warn('Prices do not sum to 1.0:', priceSum, calculatedPrices);
-    }
-  }, [currentItem, item, isPoll, itemData.optionType, itemData.drawEnabled, itemData.marketTeamALiquidity, itemData.marketTeamBLiquidity, itemData.marketDrawLiquidity, itemData.marketYesLiquidity, itemData.marketNoLiquidity, itemData.options]);
+  }, [currentItem, item, isPoll, itemData?.marketId, itemData.optionType, itemData.drawEnabled, itemData.marketTeamALiquidity, itemData.marketTeamBLiquidity, itemData.marketDrawLiquidity, itemData.marketYesLiquidity, itemData.marketNoLiquidity, itemData.options]);
 
   const fetchMarketData = useCallback(async () => {
     try {
@@ -2873,22 +2865,34 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     setChartData(displayPoints.map(cloneChartPoint));
   }, [getOutcomeSeriesConfig, getChartRangeBoundsMs, outcomeImpliedPrices, cloneChartPoint]);
 
-  const fetchOrderbookActivity = useCallback(async () => {
-    if (!itemData?.marketId || !outcomeRows.length) return;
-    try {
-      const keys = outcomeRows.map((r) => r.key).join(',');
-      const { data } = await api.get(`/orderbook/market/${itemData.marketId}/activity`, {
-        params: {
-          optionKeys: keys,
-          startingPrices: JSON.stringify(itemData.startingPrices || []),
-        },
-      });
+  const scheduleChartRender = useCallback(() => {
+    const now = Date.now();
+    const elapsed = now - lastChartRenderMsRef.current;
+    const run = () => {
+      lastChartRenderMsRef.current = Date.now();
+      rebuildChartDisplay();
+    };
+    if (elapsed >= MARKET_CHART_MIN_MS) {
+      run();
+      return;
+    }
+    if (chartThrottleTimerRef.current) return;
+    chartThrottleTimerRef.current = window.setTimeout(() => {
+      chartThrottleTimerRef.current = null;
+      run();
+    }, MARKET_CHART_MIN_MS - elapsed);
+  }, [rebuildChartDisplay]);
+
+  const applyActivityToChart = useCallback(
+    (data) => {
       const series = getOutcomeSeriesConfig();
       const keysList = series.map((s) => s.key);
+      if (!keysList.length) return;
+
       const lastByKey = {};
       keysList.forEach((k) => {
         lastByKey[k] =
-          Number(data.impliedNow?.[k]) ||
+          Number(data?.impliedNow?.[k]) ||
           Number(outcomeImpliedPrices[k]) ||
           1 / Math.max(1, keysList.length);
       });
@@ -2903,7 +2907,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       };
 
       const points = [];
-      const tradeList = Array.isArray(data.trades) ? data.trades : [];
+      const tradeList = Array.isArray(data?.trades) ? data.trades : [];
       for (const tr of tradeList) {
         const tms = new Date(tr.t).getTime();
         if (!Number.isFinite(tms)) continue;
@@ -2913,13 +2917,12 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
           if (String(tr.side).toUpperCase() === 'YES') lastByKey[ok] = px;
           else if (String(tr.side).toUpperCase() === 'NO') lastByKey[ok] = 1 - px;
         }
-        const point = normalizePoint({ t: tms, ...Object.fromEntries(keysList.map((k) => [k, lastByKey[k]])) });
-        points.push(point);
+        points.push(normalizePoint({ t: tms, ...Object.fromEntries(keysList.map((k) => [k, lastByKey[k]])) }));
       }
 
       const nowPoint = normalizePoint({
         t: Date.now(),
-        ...Object.fromEntries(keysList.map((k) => [k, data.impliedNow?.[k] ?? lastByKey[k] ?? 0])),
+        ...Object.fromEntries(keysList.map((k) => [k, data?.impliedNow?.[k] ?? lastByKey[k] ?? 0])),
       });
       if (!points.length) {
         points.push(
@@ -2935,63 +2938,99 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
 
       chartHistoryRef.current = points;
       lastChartPointSigRef.current = '';
-      rebuildChartDisplay();
-    } catch (e) {
-      console.warn('fetchOrderbookActivity', e?.message || e);
-    }
-  }, [
-    itemData?.marketId,
-    itemData.startingPrices,
-    outcomeRows,
-    getOutcomeSeriesConfig,
-    outcomeImpliedPrices,
-    rebuildChartDisplay,
-  ]);
+      scheduleChartRender();
+    },
+    [getOutcomeSeriesConfig, outcomeImpliedPrices, scheduleChartRender]
+  );
+
+  const refreshMarketLiveData = useCallback(
+    async (opts = {}) => {
+      const force = opts.force === true;
+      if (marketPollInFlightRef.current && !force) return;
+      const chainMarketId = itemData?.marketId;
+      if (!chainMarketId || !outcomeRows.length) return;
+      if (!pageVisibleRef.current && !force) return;
+
+      marketPollInFlightRef.current = true;
+      try {
+        const keys = outcomeRows.map((r) => r.key).join(',');
+        const { data } = await api.get(`/orderbook/market/${chainMarketId}/snapshot`, {
+          params: {
+            optionKeys: keys,
+            startingPrices: JSON.stringify(itemData.startingPrices || []),
+          },
+        });
+
+        const impliedSig = JSON.stringify(data?.impliedNow || {});
+        const booksSig = Object.entries(data?.booksByOption || {})
+          .map(([k, v]) => `${k}:${fingerprintBooksPair(v)}`)
+          .join(';');
+        const snapSig = `${impliedSig}|${booksSig}`;
+        if (!force && snapSig === lastSnapshotSigRef.current) return;
+        lastSnapshotSigRef.current = snapSig;
+
+        if (data?.impliedNow && Object.keys(data.impliedNow).length > 0) {
+          setServerImpliedPrices((prev) =>
+            JSON.stringify(prev) === JSON.stringify(data.impliedNow) ? prev : data.impliedNow
+          );
+        }
+
+        setBooksByOption((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const [k, v] of Object.entries(data.booksByOption || {})) {
+            const fp = fingerprintBooksPair(v);
+            if (!force && fingerprintBooksPair(prev[k]) === fp) continue;
+            next[k] = v;
+            changed = true;
+          }
+          return changed ? next : prev;
+        });
+
+        applyActivityToChart(data);
+
+        if (user) {
+          fetchTradingPanel({ silent: true });
+        }
+      } catch (e) {
+        console.warn('refreshMarketLiveData', e?.message || e);
+      } finally {
+        marketPollInFlightRef.current = false;
+      }
+    },
+    [
+      itemData?.marketId,
+      itemData.startingPrices,
+      outcomeRows,
+      user,
+      applyActivityToChart,
+      fetchTradingPanel,
+    ]
+  );
+
+  const fetchOrderbookActivity = refreshMarketLiveData;
+  useEffect(() => {
+    scheduleChartRender();
+  }, [chartRange, customRangeFrom, customRangeTo, scheduleChartRender]);
 
   useEffect(() => {
-    fetchOrderbookActivity();
-  }, [fetchOrderbookActivity]);
+    const onVis = () => {
+      pageVisibleRef.current = document.visibilityState !== 'hidden';
+      if (pageVisibleRef.current) {
+        refreshMarketLiveData({ force: true });
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [refreshMarketLiveData]);
 
   useEffect(() => {
-    const series = getOutcomeSeriesConfig();
-    if (!series.length) return;
-    const sig = series.map((s) => `${s.key}:${(outcomeImpliedPrices[s.key] ?? 0).toFixed(4)}`).join('|');
-    if (!sig) return;
-
-    const now = Date.now();
-    const last = chartHistoryRef.current[chartHistoryRef.current.length - 1];
-    if (sig !== lastChartPointSigRef.current) {
-      if (last && now - last.t < 1200) {
-        const updated = { ...last, t: now };
-        series.forEach((s) => {
-          updated[s.key] = outcomeImpliedPrices[s.key] ?? 0;
-        });
-        chartHistoryRef.current = [
-          ...chartHistoryRef.current.slice(0, -1),
-          updated,
-        ];
-      } else {
-        const point = { t: now };
-        series.forEach((s) => {
-          point[s.key] = outcomeImpliedPrices[s.key] ?? 0;
-        });
-        chartHistoryRef.current = [...chartHistoryRef.current, point];
+    return () => {
+      if (chartThrottleTimerRef.current) {
+        window.clearTimeout(chartThrottleTimerRef.current);
       }
-      lastChartPointSigRef.current = sig;
-      if (chartHistoryRef.current.length > 600) {
-        chartHistoryRef.current = chartHistoryRef.current.slice(-600);
-      }
-    }
-    rebuildChartDisplay();
-  }, [
-    outcomeImpliedPrices,
-    booksByOption,
-    chartRange,
-    customRangeFrom,
-    customRangeTo,
-    getOutcomeSeriesConfig,
-    rebuildChartDisplay,
-  ]);
+    };
+  }, []);
 
   const fetchComments = useCallback(async () => {
     try {
@@ -3039,17 +3078,30 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
   }, [currentItem, item, isPoll, user?._id]);
 
   useEffect(() => {
+    if (itemData?.marketId) return undefined;
     fetchMarketData();
-    if (user) {
-      fetchUserMarketPrediction();
-    } else {
-      setPredictions({});
-    }
-    const interval = setInterval(() => {
-      fetchMarketData();
-    }, 5000);
+    const interval = setInterval(fetchMarketData, MARKET_LIVE_POLL_MS);
     return () => clearInterval(interval);
-  }, [currentItem, item, user, isPoll, fetchMarketData, fetchUserMarketPrediction]);
+  }, [itemData?.marketId, fetchMarketData]);
+
+  useEffect(() => {
+    if (!itemData?.marketId) return undefined;
+    if (user) fetchUserMarketPrediction();
+    const predInterval = user
+      ? setInterval(() => fetchUserMarketPrediction(), MARKET_LIVE_POLL_MS * 3)
+      : null;
+    return () => {
+      if (predInterval) clearInterval(predInterval);
+    };
+  }, [itemData?.marketId, user, fetchUserMarketPrediction]);
+
+  useEffect(() => {
+    if (!itemData?.marketId) return undefined;
+    lastSnapshotSigRef.current = '';
+    refreshMarketLiveData({ force: true });
+    const id = setInterval(() => refreshMarketLiveData(), MARKET_LIVE_POLL_MS);
+    return () => clearInterval(id);
+  }, [itemData?.marketId, outcomeRows, refreshMarketLiveData]);
 
   useEffect(() => {
     fetchComments();
@@ -3445,34 +3497,24 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
           api.get(`/orderbook/book/${chainMarketId}`, { params: { optionKey: key, side: 'YES' } }),
           api.get(`/orderbook/book/${chainMarketId}`, { params: { optionKey: key, side: 'NO' } }),
         ]);
-        setBooksByOption((prev) => ({
-          ...prev,
-          [key]: {
-            YES: yesRes.data || { bids: [], asks: [] },
-            NO: noRes.data || { bids: [], asks: [] },
-          },
-        }));
+        const pair = {
+          YES: yesRes.data || { bids: [], asks: [] },
+          NO: noRes.data || { bids: [], asks: [] },
+        };
+        setBooksByOption((prev) => {
+          if (fingerprintBooksPair(prev[key]) === fingerprintBooksPair(pair)) return prev;
+          return { ...prev, [key]: pair };
+        });
       } catch {
-        setBooksByOption((prev) => ({
-          ...prev,
-          [key]: { YES: { bids: [], asks: [] }, NO: { bids: [], asks: [] } },
-        }));
+        const empty = { YES: { bids: [], asks: [] }, NO: { bids: [], asks: [] } };
+        setBooksByOption((prev) => {
+          if (fingerprintBooksPair(prev[key]) === fingerprintBooksPair(empty)) return prev;
+          return { ...prev, [key]: empty };
+        });
       }
     },
     [itemData?.marketId]
   );
-
-  useEffect(() => {
-    if (!itemData?.marketId) return;
-    fetchAllOptionBooks();
-    fetchOrderbookActivity();
-    const id = setInterval(() => {
-      fetchAllOptionBooks();
-      fetchOrderbookActivity();
-      if (user) fetchTradingPanel({ silent: true });
-    }, 5000);
-    return () => clearInterval(id);
-  }, [itemData?.marketId, fetchAllOptionBooks, fetchOrderbookActivity, user, fetchTradingPanel]);
 
   const cancelAllOpenOrders = useCallback(async () => {
     if (!myOrders.length) return;
@@ -3801,7 +3843,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                               </div>
                               </div>
                               <span className="self-center shrink-0 min-w-[3.25rem] pl-2 text-right text-2xl sm:text-3xl font-bold tabular-nums leading-none text-slate-800 dark:text-slate-100">
-                                {o.volumePct != null ? `${o.volumePct.toFixed(0)}%` : '—'}
+                                {o.volumePct != null ? `${o.volumePct.toFixed(1)}%` : '—'}
                               </span>
                             </div>
                           </button>
@@ -3938,8 +3980,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                     onClick={async () => {
                       await Promise.all([
                         fetchTradingPanel({ silent: true, force: true }),
-                        fetchAllOptionBooks({ force: true }),
-                        fetchOrderbookActivity(),
+                        refreshMarketLiveData({ force: true }),
                       ]);
                     }}
                     className="shrink-0 px-3 py-2 text-sm font-medium rounded-lg bg-blue-600 dark:bg-blue-500 text-white hover:bg-blue-700 dark:hover:bg-blue-400 transition-colors shadow-sm dark:shadow-none"
@@ -4750,8 +4791,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                       }
                       await Promise.all([
                         fetchTradingPanel({ silent: true, force: true }),
-                        fetchAllOptionBooks({ force: true }),
-                        fetchOrderbookActivity(),
+                        refreshMarketLiveData({ force: true }),
                       ]);
                       try {
                         const itemResponse = isPoll
