@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import WalletConnectButton from './WalletConnectButton';
 import GoogleSignInButton from './GoogleSignInButton';
-import TurnstileWidget from './TurnstileWidget';
+import AuthTurnstileSection from './AuthTurnstileSection';
+import { useTurnstile } from '../hooks/useTurnstile';
 import { useNotification } from './Notification';
+import Modal from './Modal';
 import api from '../utils/api';
 
 const LoginModal = ({ onClose, onSwitchToSignup }) => {
@@ -11,12 +13,11 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [turnstileToken, setTurnstileToken] = useState('');
-  const [turnstileReset, setTurnstileReset] = useState(0);
   const { login } = useAuth();
   const { showNotification, dismissNotification } = useNotification();
+  const turnstile = useTurnstile();
 
-  const [view, setView] = useState('login'); // login | reset_request | reset_verify | reset_confirm
+  const [view, setView] = useState('login');
   const [resetEmail, setResetEmail] = useState('');
   const [resetCode, setResetCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -51,24 +52,25 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
 
   useEffect(() => () => clearResetTimer(), [clearResetTimer]);
 
+  const authBlocked = turnstile.enabled === true && !turnstile.verified;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!turnstile.assertVerified(showNotification)) return;
     setError('');
     setLoading(true);
     const loadingToastId = showNotification('Logging in...', 'loading', 0);
 
     try {
-      await login(identifier, password, { turnstileToken });
+      await login(identifier, password, { turnstileToken: turnstile.token });
       dismissNotification(loadingToastId);
-      setLoading(false);
       showNotification('Login successful!', 'success');
       onClose();
     } catch (err) {
       const message = err.response?.data?.message || 'Login failed. Please try again.';
       setError(message);
       showNotification(message, 'error');
-      setTurnstileToken('');
-      setTurnstileReset((k) => k + 1);
+      turnstile.clear();
     } finally {
       dismissNotification(loadingToastId);
       setLoading(false);
@@ -149,8 +151,8 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="relative bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+    <Modal isOpen onClose={onClose} title={view === 'login' ? 'Login' : 'Reset Password'} size="sm">
+      <div className="relative">
         {loading && view === 'login' && (
           <div
             className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-lg bg-white/80 dark:bg-gray-800/80 backdrop-blur-[1px]"
@@ -168,37 +170,37 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
             <p className="text-sm font-medium text-gray-700 dark:text-gray-200">Logging in...</p>
           </div>
         )}
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-            {view === 'login' ? 'Login' : 'Reset Password'}
-          </h2>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
 
         {error && (
-          <div className="mb-4 p-3 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200 rounded">
+          <div className="mb-4 p-3 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-200 rounded text-sm">
             {error}
           </div>
         )}
 
         {resetMessage && (
-          <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900 text-blue-700 dark:text-blue-200 rounded">
+          <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900 text-blue-700 dark:text-blue-200 rounded text-sm">
             {resetMessage}
           </div>
         )}
 
         {view === 'login' ? (
           <>
-            <GoogleSignInButton onSuccess={onClose} onError={setError} />
+            <AuthTurnstileSection
+              enabled={turnstile.enabled}
+              loading={turnstile.loading}
+              verified={turnstile.verified}
+              siteKey={turnstile.siteKey}
+              resetKey={turnstile.resetKey}
+              onVerify={turnstile.setToken}
+              onExpire={() => turnstile.setToken('')}
+              onClear={turnstile.clear}
+            />
 
-            <div className="relative mb-4">
+            <div className={authBlocked ? 'opacity-50 pointer-events-none select-none' : ''}>
+              <GoogleSignInButton onSuccess={onClose} onError={setError} />
+            </div>
+
+            <div className="relative my-4">
               <div className="absolute inset-0 flex items-center">
                 <div className="w-full border-t border-gray-300 dark:border-gray-600" />
               </div>
@@ -236,27 +238,25 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
                 />
               </div>
 
-              <div className="flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setError('');
-                    setResetMessage('');
-                    setResetEmail('');
-                    setResetCode('');
-                    setNewPassword('');
-                    setView('reset_request');
-                  }}
-                  className="text-sm text-blue-500 hover:text-blue-600 font-medium"
-                >
-                  Forgot password?
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setResetMessage('');
+                  setResetEmail('');
+                  setResetCode('');
+                  setNewPassword('');
+                  setView('reset_request');
+                }}
+                className="text-sm text-blue-500 hover:text-blue-600 font-medium"
+              >
+                Forgot password?
+              </button>
 
               <button
                 type="submit"
-                disabled={loading}
-                className="w-full py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                disabled={loading || authBlocked}
+                className="w-full py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>
@@ -270,43 +270,41 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
                     </svg>
                     Logging in...
                   </>
+                ) : authBlocked ? (
+                  'Complete security check to login'
                 ) : (
                   'Login'
                 )}
               </button>
-
-              <TurnstileWidget
-                className="flex justify-center pt-1"
-                resetKey={turnstileReset}
-                onVerify={setTurnstileToken}
-                onExpire={() => setTurnstileToken('')}
-              />
             </form>
 
             <div className="mt-4 relative">
               <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300 dark:border-gray-600"></div>
+                <div className="w-full border-t border-gray-300 dark:border-gray-600" />
               </div>
               <div className="relative flex justify-center text-sm">
                 <span className="px-2 bg-white dark:bg-gray-800 text-gray-500">Or</span>
               </div>
             </div>
 
-            <div className="mt-4">
-              <WalletConnectButton onSuccess={onClose} onConnectClick={onClose} />
+            <div className={`mt-4 ${authBlocked ? 'opacity-50 pointer-events-none select-none' : ''}`}>
+              <WalletConnectButton
+                onSuccess={onClose}
+                onConnectClick={onClose}
+                beforeConnect={() => turnstile.assertVerified(showNotification)}
+              />
             </div>
 
-            <div className="mt-4 text-center">
-              <span className="text-sm text-gray-600 dark:text-gray-400">
-                Don't have an account?{' '}
-                <button
-                  onClick={onSwitchToSignup}
-                  className="text-blue-500 hover:text-blue-600 font-medium"
-                >
-                  Sign up
-                </button>
-              </span>
-            </div>
+            <p className="mt-4 text-center text-sm text-gray-600 dark:text-gray-400">
+              Don&apos;t have an account?{' '}
+              <button
+                type="button"
+                onClick={onSwitchToSignup}
+                className="text-blue-500 hover:text-blue-600 font-medium"
+              >
+                Sign up
+              </button>
+            </p>
           </>
         ) : view === 'reset_request' ? (
           <form onSubmit={requestReset} className="space-y-4">
@@ -347,8 +345,7 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
           <form onSubmit={verifyReset} className="space-y-4">
             <p className="text-sm text-gray-600 dark:text-gray-400">
               Enter the 6-digit code sent to{' '}
-              <span className="font-medium">{resetEmailMasked || resetEmail}</span>.
-              Check your inbox and spam folder.
+              <span className="font-medium">{resetEmailMasked || resetEmail}</span>. Check your inbox and spam folder.
             </p>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -436,9 +433,8 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
             </div>
           </form>
         )}
-
       </div>
-    </div>
+    </Modal>
   );
 };
 

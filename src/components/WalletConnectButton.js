@@ -4,7 +4,7 @@ import { useWallet } from '../context/WalletContext';
 import { useNotification } from './Notification';
 import api from '../utils/api';
 
-const WalletConnectButton = ({ onSuccess, onConnectClick }) => {
+const WalletConnectButton = ({ onSuccess, onConnectClick, beforeConnect }) => {
   const [loading, setLoading] = useState(false);
   const { loginWithWallet, user, checkAuth } = useAuth();
   const { connect, account } = useWallet();
@@ -75,6 +75,7 @@ const WalletConnectButton = ({ onSuccess, onConnectClick }) => {
   );
 
   useEffect(() => {
+    if (beforeConnect) return;
     if (!account) return;
     if (authInProgressRef.current) return;
 
@@ -94,6 +95,7 @@ const WalletConnectButton = ({ onSuccess, onConnectClick }) => {
   }, [account, user, authenticateWallet]);
 
   const connectWallet = async () => {
+    if (beforeConnect && !beforeConnect()) return;
     if (onConnectClick) onConnectClick();
     await new Promise((r) => requestAnimationFrame(r));
     setLoading(true);

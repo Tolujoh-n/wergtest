@@ -1,5 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
-import api from '../utils/api';
+import React, { useEffect, useRef } from 'react';
 
 let turnstileScriptPromise = null;
 
@@ -11,6 +10,10 @@ function loadTurnstileScript() {
   turnstileScriptPromise = new Promise((resolve, reject) => {
     const existing = document.querySelector('script[data-turnstile="true"]');
     if (existing) {
+      if (window.turnstile) {
+        resolve();
+        return;
+      }
       existing.addEventListener('load', () => resolve());
       existing.addEventListener('error', reject);
       return;
@@ -28,10 +31,10 @@ function loadTurnstileScript() {
 }
 
 /**
- * Cloudflare Turnstile widget. Fetches site key from /config/security when not passed.
+ * Cloudflare Turnstile — renders once per resetKey; callbacks via refs (no re-mount loop).
  */
 export default function TurnstileWidget({
-  siteKey: siteKeyProp,
+  siteKey,
   onVerify,
   onExpire,
   onError,
@@ -40,72 +43,52 @@ export default function TurnstileWidget({
 }) {
   const containerRef = useRef(null);
   const widgetIdRef = useRef(null);
-  const [siteKey, setSiteKey] = useState(siteKeyProp || '');
-  const [ready, setReady] = useState(false);
-  const [loadError, setLoadError] = useState('');
+  const onVerifyRef = useRef(onVerify);
+  const onExpireRef = useRef(onExpire);
+  const onErrorRef = useRef(onError);
 
-  useEffect(() => {
-    if (siteKeyProp) {
-      setSiteKey(siteKeyProp);
-      return;
-    }
-    let cancelled = false;
-    api
-      .get('/config/security')
-      .then(({ data }) => {
-        if (!cancelled && data?.turnstileSiteKey) {
-          setSiteKey(data.turnstileSiteKey);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [siteKeyProp]);
+  onVerifyRef.current = onVerify;
+  onExpireRef.current = onExpire;
+  onErrorRef.current = onError;
 
   useEffect(() => {
     if (!siteKey) return undefined;
 
     let cancelled = false;
-    loadTurnstileScript()
-      .then(() => {
-        if (!cancelled) setReady(true);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLoadError('Security check could not load.');
-          onError?.();
+
+    const mount = async () => {
+      try {
+        await loadTurnstileScript();
+        if (cancelled || !containerRef.current || !window.turnstile) return;
+
+        if (widgetIdRef.current != null) {
+          try {
+            window.turnstile.remove(widgetIdRef.current);
+          } catch {
+            /* ignore */
+          }
+          widgetIdRef.current = null;
         }
-      });
+
+        containerRef.current.innerHTML = '';
+
+        widgetIdRef.current = window.turnstile.render(containerRef.current, {
+          sitekey: siteKey,
+          theme: 'auto',
+          size: 'normal',
+          callback: (t) => onVerifyRef.current?.(t),
+          'expired-callback': () => onExpireRef.current?.(),
+          'error-callback': () => onErrorRef.current?.(),
+        });
+      } catch {
+        if (!cancelled) onErrorRef.current?.();
+      }
+    };
+
+    mount();
 
     return () => {
       cancelled = true;
-    };
-  }, [siteKey, onError]);
-
-  useEffect(() => {
-    if (!ready || !siteKey || !containerRef.current || !window.turnstile) return undefined;
-
-    if (widgetIdRef.current != null) {
-      try {
-        window.turnstile.remove(widgetIdRef.current);
-      } catch {
-        /* ignore */
-      }
-      widgetIdRef.current = null;
-    }
-
-    widgetIdRef.current = window.turnstile.render(containerRef.current, {
-      sitekey: siteKey,
-      theme: 'auto',
-      callback: (token) => onVerify?.(token),
-      'expired-callback': () => onExpire?.(),
-      'error-callback': () => {
-        onError?.();
-      },
-    });
-
-    return () => {
       if (widgetIdRef.current != null && window.turnstile) {
         try {
           window.turnstile.remove(widgetIdRef.current);
@@ -115,16 +98,16 @@ export default function TurnstileWidget({
         widgetIdRef.current = null;
       }
     };
-  }, [ready, siteKey, resetKey, onVerify, onExpire, onError]);
+  }, [siteKey, resetKey]);
 
   if (!siteKey) return null;
 
   return (
     <div className={className}>
-      <div ref={containerRef} className="min-h-[65px] flex items-center justify-center" />
-      {loadError ? (
-        <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">{loadError}</p>
-      ) : null}
+      <div
+        ref={containerRef}
+        className="min-h-[65px] w-full flex items-center justify-center [&>iframe]:max-w-full"
+      />
     </div>
   );
 }
