@@ -30,7 +30,7 @@ import {
 } from '../utils/blockchain';
 import Modal from '../components/Modal';
 import FreePredictionModal from '../components/FreePredictionModal';
-import PhoneVerificationModal from '../components/PhoneVerificationModal';
+import EmailVerificationModal from '../components/EmailVerificationModal';
 import NftHolderBonusesSection from '../components/NftHolderBonusesSection';
 import { useFreeTicketData } from '../hooks/useFreeTicketData';
 import TicketBalanceCards from '../components/TicketBalanceCards';
@@ -681,7 +681,7 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
   const { ensureConnected, isConnecting } = useWallet();
   const { showNotification } = useNotification();
   const [freePickerOpen, setFreePickerOpen] = useState(false);
-  const [phoneVerifyOpen, setPhoneVerifyOpen] = useState(false);
+  const [emailVerifyOpen, setEmailVerifyOpen] = useState(false);
   const [pendingFreePick, setPendingFreePick] = useState(null);
   const [freePickerOutcome, setFreePickerOutcome] = useState(null);
   const [freePickerOutcomeImage, setFreePickerOutcomeImage] = useState(null);
@@ -825,9 +825,12 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
       showNotification('Please log in to make a free prediction', 'warning');
       return;
     }
-    if (!user.phoneVerified) {
+    if (!user.emailVerified) {
       setPendingFreePick({ optionText, optionImage });
-      setPhoneVerifyOpen(true);
+      setEmailVerifyOpen(true);
+      if (user.needsReverification) {
+        showNotification('Email verification expired — please re-verify to play free predictions', 'warning');
+      }
       return;
     }
     setFreePickerMode('create');
@@ -845,8 +848,8 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
     setFreePickerOpen(true);
   }, [pendingFreePick]);
 
-  const handlePhoneVerified = useCallback(async () => {
-    setPhoneVerifyOpen(false);
+  const handleEmailVerified = useCallback(async () => {
+    setEmailVerifyOpen(false);
     await refreshUser?.();
     continuePendingFreePick();
   }, [refreshUser, continuePendingFreePick]);
@@ -992,16 +995,30 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
 
           {user && (
             <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-4 mb-6 space-y-4 bg-slate-50/80 dark:bg-slate-900/40">
-              {user.phoneVerified ? (
+              {user.emailVerified ? (
                 <p className="text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
                   <span className="inline-flex w-4 h-4 rounded-full bg-emerald-600 text-white items-center justify-center text-[10px] font-bold">
                     ✓
                   </span>
-                  Phone verified{user.phoneMasked ? ` · ${user.phoneMasked}` : ''}
+                  Email verified for free play
+                  {user.emailMasked ? ` · ${user.emailMasked}` : user.email ? ` · ${user.email}` : ''}
+                  {user.emailVerificationExpiresAt ? (
+                    <span className="text-emerald-600/80 dark:text-emerald-400/80">
+                      {' '}
+                      · valid until{' '}
+                      {new Date(user.emailVerificationExpiresAt).toLocaleDateString()}
+                    </span>
+                  ) : null}
+                </p>
+              ) : user.needsReverification ? (
+                <p className="text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                  Your email verification has expired. Re-verify to place free predictions (required
+                  every {user.emailVerificationValidDays || 30} days).
                 </p>
               ) : (
                 <p className="text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
-                  Verify your mobile number once to place free predictions (SMS code).
+                  Verify your email once to place free predictions (we&apos;ll send a 6-digit code).
+                  Re-verification is required every {user.emailVerificationValidDays || 30} days.
                 </p>
               )}
               <TicketBalanceCards
@@ -1107,13 +1124,13 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
             </div>
           )}
 
-          <PhoneVerificationModal
-            open={phoneVerifyOpen}
+          <EmailVerificationModal
+            open={emailVerifyOpen}
             onClose={() => {
-              setPhoneVerifyOpen(false);
+              setEmailVerifyOpen(false);
               setPendingFreePick(null);
             }}
-            onVerified={handlePhoneVerified}
+            onVerified={handleEmailVerified}
             outcomePreview={
               pendingFreePick
                 ? `${pendingFreePick.optionText}${isPoll ? '' : ' Wins'}`

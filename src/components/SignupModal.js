@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import WalletConnectButton from './WalletConnectButton';
 import GoogleSignInButton from './GoogleSignInButton';
+import TurnstileWidget from './TurnstileWidget';
 import { useNotification } from './Notification';
 import Modal from './Modal';
 
@@ -12,6 +13,8 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileReset, setTurnstileReset] = useState(0);
   const { signup } = useAuth();
   const { showNotification, dismissNotification } = useNotification();
 
@@ -33,7 +36,7 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
     const loadingToastId = showNotification('Signing up...', 'loading', 0);
 
     try {
-      await signup(email, password, username);
+      await signup(email, password, username, { turnstileToken });
       dismissNotification(loadingToastId);
       setLoading(false);
       showNotification('Sign up successful!', 'success');
@@ -42,6 +45,8 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
       const message = err.response?.data?.message || 'Signup failed. Please try again.';
       setError(message);
       showNotification(message, 'error');
+      setTurnstileToken('');
+      setTurnstileReset((k) => k + 1);
     } finally {
       dismissNotification(loadingToastId);
       setLoading(false);
@@ -168,6 +173,13 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
             'Sign Up'
           )}
         </button>
+
+        <TurnstileWidget
+          className="flex justify-center pt-1"
+          resetKey={turnstileReset}
+          onVerify={setTurnstileToken}
+          onExpire={() => setTurnstileToken('')}
+        />
       </form>
 
       <div className="relative my-4">

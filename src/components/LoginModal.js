@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import WalletConnectButton from './WalletConnectButton';
 import GoogleSignInButton from './GoogleSignInButton';
+import TurnstileWidget from './TurnstileWidget';
 import { useNotification } from './Notification';
 import api from '../utils/api';
 
@@ -10,6 +11,8 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileReset, setTurnstileReset] = useState(0);
   const { login } = useAuth();
   const { showNotification, dismissNotification } = useNotification();
 
@@ -18,6 +21,35 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
   const [resetCode, setResetCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [resetMessage, setResetMessage] = useState('');
+  const [resetEmailMasked, setResetEmailMasked] = useState('');
+  const [resetResendSeconds, setResetResendSeconds] = useState(0);
+  const resetTimerRef = useRef(null);
+
+  const clearResetTimer = useCallback(() => {
+    if (resetTimerRef.current) {
+      window.clearInterval(resetTimerRef.current);
+      resetTimerRef.current = null;
+    }
+  }, []);
+
+  const startResetCountdown = useCallback(
+    (seconds = 60) => {
+      clearResetTimer();
+      setResetResendSeconds(seconds);
+      resetTimerRef.current = window.setInterval(() => {
+        setResetResendSeconds((s) => {
+          if (s <= 1) {
+            clearResetTimer();
+            return 0;
+          }
+          return s - 1;
+        });
+      }, 1000);
+    },
+    [clearResetTimer]
+  );
+
+  useEffect(() => () => clearResetTimer(), [clearResetTimer]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -26,7 +58,7 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
     const loadingToastId = showNotification('Logging in...', 'loading', 0);
 
     try {
-      await login(identifier, password);
+      await login(identifier, password, { turnstileToken });
       dismissNotification(loadingToastId);
       setLoading(false);
       showNotification('Login successful!', 'success');
@@ -35,6 +67,8 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
       const message = err.response?.data?.message || 'Login failed. Please try again.';
       setError(message);
       showNotification(message, 'error');
+      setTurnstileToken('');
+      setTurnstileReset((k) => k + 1);
     } finally {
       dismissNotification(loadingToastId);
       setLoading(false);
@@ -42,18 +76,23 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
   };
 
   const requestReset = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     setError('');
     setResetMessage('');
     setLoading(true);
     try {
-      const res = await api.post('/auth/password-reset/request', { email: resetEmail });
+      const res = await api.post('/auth/password-reset/request', { email: resetEmail.trim() });
       setResetMessage(
         res.data?.message ||
           'If that email is registered with a password, we sent a verification code to your inbox.'
       );
+      if (res.data?.emailMasked) setResetEmailMasked(res.data.emailMasked);
+      setResetCode('');
       setView('reset_verify');
+      startResetCountdown(60);
     } catch (err) {
+      const retry = err.response?.data?.retryAfterSeconds;
+      if (retry) startResetCountdown(retry);
       setError(err.response?.data?.message || 'Unable to send reset email. Please try again.');
     } finally {
       setLoading(false);
@@ -65,8 +104,12 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
     setError('');
     setLoading(true);
     try {
-      const res = await api.post('/auth/password-reset/verify', { email: resetEmail, code: resetCode });
+      const res = await api.post('/auth/password-reset/verify', {
+        email: resetEmail.trim(),
+        code: resetCode.replace(/\D/g, ''),
+      });
       if (res.data?.verified) {
+        if (res.data.emailMasked) setResetEmailMasked(res.data.emailMasked);
         setView('reset_confirm');
       } else {
         setError('Invalid or expired code');
@@ -84,16 +127,20 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
     setLoading(true);
     try {
       await api.post('/auth/password-reset/confirm', {
-        email: resetEmail,
-        code: resetCode,
+        email: resetEmail.trim(),
+        code: resetCode.replace(/\D/g, ''),
         newPassword,
       });
       setResetMessage('Password updated. You can now login.');
       setView('login');
-      setIdentifier(resetEmail);
+      setIdentifier(resetEmail.trim());
       setPassword('');
       setNewPassword('');
       setResetCode('');
+      setResetEmailMasked('');
+      clearResetTimer();
+      setResetResendSeconds(0);
+      showNotification('Password updated successfully', 'success');
     } catch (err) {
       setError(err.response?.data?.message || 'Password reset failed');
     } finally {
@@ -227,6 +274,13 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
                   'Login'
                 )}
               </button>
+
+              <TurnstileWidget
+                className="flex justify-center pt-1"
+                resetKey={turnstileReset}
+                onVerify={setTurnstileToken}
+                onExpire={() => setTurnstileToken('')}
+              />
             </form>
 
             <div className="mt-4 relative">
@@ -293,7 +347,8 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
           <form onSubmit={verifyReset} className="space-y-4">
             <p className="text-sm text-gray-600 dark:text-gray-400">
               Enter the 6-digit code sent to{' '}
-              <span className="font-medium">{resetEmail}</span>.
+              <span className="font-medium">{resetEmailMasked || resetEmail}</span>.
+              Check your inbox and spam folder.
             </p>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -302,24 +357,43 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
               <input
                 type="text"
                 value={resetCode}
-                onChange={(e) => setResetCode(e.target.value)}
+                onChange={(e) => setResetCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 required
                 inputMode="numeric"
-                placeholder="6-digit code"
-                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                autoComplete="one-time-code"
+                maxLength={6}
+                placeholder="000000"
+                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white text-center text-lg font-bold tracking-[0.3em]"
               />
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <button
+                type="button"
+                onClick={() => setView('reset_request')}
+                className="text-gray-600 dark:text-gray-400 hover:text-blue-500 font-medium"
+              >
+                Change email
+              </button>
+              <button
+                type="button"
+                disabled={resetResendSeconds > 0 || loading}
+                onClick={requestReset}
+                className="font-semibold text-blue-500 disabled:text-gray-400 hover:underline"
+              >
+                {resetResendSeconds > 0 ? `Resend in ${resetResendSeconds}s` : 'Resend code'}
+              </button>
             </div>
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setView('reset_request')}
+                onClick={() => setView('login')}
                 className="w-1/2 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
               >
                 Back
               </button>
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || resetCode.replace(/\D/g, '').length !== 6}
                 className="w-1/2 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors"
               >
                 {loading ? 'Verifying...' : 'Verify'}

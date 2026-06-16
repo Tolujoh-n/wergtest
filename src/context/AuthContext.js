@@ -84,8 +84,12 @@ export const AuthProvider = ({ children }) => {
     checkAuth();
   }, [checkAuth]);
 
-  const login = async (identifier, password) => {
-    const response = await api.post('/auth/login', { identifier, password });
+  const login = async (identifier, password, options = {}) => {
+    const response = await api.post('/auth/login', {
+      identifier,
+      password,
+      turnstileToken: options.turnstileToken,
+    });
     localStorage.setItem('token', response.data.token);
     touchActivity();
     setUser(response.data.user);
@@ -93,8 +97,13 @@ export const AuthProvider = ({ children }) => {
     return response.data;
   };
 
-  const signup = async (email, password, username) => {
-    const response = await api.post('/auth/signup', { email, password, username });
+  const signup = async (email, password, username, options = {}) => {
+    const response = await api.post('/auth/signup', {
+      email,
+      password,
+      username,
+      turnstileToken: options.turnstileToken,
+    });
     localStorage.setItem('token', response.data.token);
     touchActivity();
     setUser(response.data.user);
