@@ -1,23 +1,37 @@
-import React from 'react';
+import React, { useState } from 'react';
 import TurnstileWidget from './TurnstileWidget';
 
+function LoadingSpinner() {
+  return (
+    <svg className="h-4 w-4 animate-spin text-slate-400" fill="none" viewBox="0 0 24 24" aria-hidden>
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+      />
+    </svg>
+  );
+}
+
 /**
- * Security check block shown at top of login/signup modals when Turnstile is enabled.
+ * Minimal Turnstile block for login/signup modals.
  */
 export default function AuthTurnstileSection({
   enabled,
   loading,
-  verified,
   siteKey,
   resetKey,
   onVerify,
   onExpire,
-  onClear,
 }) {
+  const [widgetLoading, setWidgetLoading] = useState(true);
+
   if (loading) {
     return (
-      <div className="mb-4 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50 px-3 py-2.5 text-xs text-slate-500">
-        Loading security check…
+      <div className="mb-4 flex items-center justify-center gap-2 py-5 text-sm text-slate-500 dark:text-slate-400">
+        <LoadingSpinner />
+        <span>Security checks loading...</span>
       </div>
     );
   }
@@ -25,37 +39,20 @@ export default function AuthTurnstileSection({
   if (!enabled) return null;
 
   return (
-    <div
-      className={`mb-4 rounded-xl border px-3 py-3 transition-colors ${
-        verified
-          ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/80 dark:bg-emerald-950/30'
-          : 'border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
-            Security check
-          </p>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            {verified
-              ? 'Verified — you can log in, sign up, or connect your wallet.'
-              : 'Complete this check before logging in, signing up, or connecting a wallet.'}
-          </p>
+    <div className="relative mb-4 flex min-h-[72px] items-center justify-center py-1">
+      {widgetLoading ? (
+        <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+          <LoadingSpinner />
+          <span>Security checks loading...</span>
         </div>
-        {verified ? (
-          <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5">
-            ✓ OK
-          </span>
-        ) : null}
-      </div>
+      ) : null}
       <TurnstileWidget
         siteKey={siteKey}
         resetKey={resetKey}
         onVerify={onVerify}
         onExpire={onExpire}
-        onError={onClear}
-        className="flex justify-center"
+        onReady={() => setWidgetLoading(false)}
+        className={`flex w-full justify-center ${widgetLoading ? 'invisible' : ''}`}
       />
     </div>
   );

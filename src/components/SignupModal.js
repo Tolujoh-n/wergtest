@@ -48,7 +48,7 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
       const message = err.response?.data?.message || 'Signup failed. Please try again.';
       setError(message);
       showNotification(message, 'error');
-      turnstile.clear();
+      turnstile.resetWidget();
     } finally {
       dismissNotification(loadingToastId);
       setLoading(false);
@@ -85,12 +85,10 @@ const SignupModal = ({ onClose, onSwitchToLogin }) => {
         <AuthTurnstileSection
           enabled={turnstile.enabled}
           loading={turnstile.loading}
-          verified={turnstile.verified}
           siteKey={turnstile.siteKey}
           resetKey={turnstile.resetKey}
           onVerify={turnstile.setToken}
-          onExpire={() => turnstile.setToken('')}
-          onClear={turnstile.clear}
+          onExpire={turnstile.clearToken}
         />
 
         <div className={authBlocked ? 'opacity-50 pointer-events-none select-none' : ''}>

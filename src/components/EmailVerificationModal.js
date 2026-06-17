@@ -81,11 +81,15 @@ export default function EmailVerificationModal({
     setSending(true);
     try {
       const { data } = await api.post('/auth/email/send-code', payload);
+      if (!data?.sent) {
+        showNotification(data?.message || 'Could not send verification code', 'error');
+        return;
+      }
       setCodeSent(true);
       setSentToMasked(data.emailMasked || emailInput);
       setStep('code');
       startCountdown(data.resendAfterSeconds || RESEND_SECONDS);
-      showNotification('Verification code sent to your email', 'success');
+      showNotification(data.message || 'Verification code sent', data.dev ? 'info' : 'success');
     } catch (e) {
       const msg = e.response?.data?.message || e.message || 'Could not send code';
       const retry = e.response?.data?.retryAfterSeconds;

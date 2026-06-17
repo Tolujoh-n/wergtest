@@ -70,7 +70,7 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
       const message = err.response?.data?.message || 'Login failed. Please try again.';
       setError(message);
       showNotification(message, 'error');
-      turnstile.clear();
+      turnstile.resetWidget();
     } finally {
       dismissNotification(loadingToastId);
       setLoading(false);
@@ -86,12 +86,16 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
       const res = await api.post('/auth/password-reset/request', { email: resetEmail.trim() });
       setResetMessage(
         res.data?.message ||
-          'If that email is registered with a password, we sent a verification code to your inbox.'
+          (res.data?.sent
+            ? 'Password reset code sent. Check your inbox and spam folder.'
+            : 'Unable to send password reset email.')
       );
-      if (res.data?.emailMasked) setResetEmailMasked(res.data.emailMasked);
-      setResetCode('');
-      setView('reset_verify');
-      startResetCountdown(60);
+      if (res.data?.sent) {
+        if (res.data.emailMasked) setResetEmailMasked(res.data.emailMasked);
+        setResetCode('');
+        setView('reset_verify');
+        startResetCountdown(60);
+      }
     } catch (err) {
       const retry = err.response?.data?.retryAfterSeconds;
       if (retry) startResetCountdown(retry);
@@ -188,12 +192,10 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
             <AuthTurnstileSection
               enabled={turnstile.enabled}
               loading={turnstile.loading}
-              verified={turnstile.verified}
               siteKey={turnstile.siteKey}
               resetKey={turnstile.resetKey}
               onVerify={turnstile.setToken}
-              onExpire={() => turnstile.setToken('')}
-              onClear={turnstile.clear}
+              onExpire={turnstile.clearToken}
             />
 
             <div className={authBlocked ? 'opacity-50 pointer-events-none select-none' : ''}>
