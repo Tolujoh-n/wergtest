@@ -259,27 +259,27 @@ export default function OrderbookTradePanel({
 
   const readVaultAvailableUsdc = useCallback(async (walletAddr) => {
     try {
-      const [apiRes, chainRes] = await Promise.allSettled([
-        api.get('/orderbook/vault', { params: { walletAddress: walletAddr }, timeout: 20000 }),
-        getTradingVaultBalance(walletAddr),
-      ]);
-      const chainStr = chainRes.status === 'fulfilled' ? chainRes.value : null;
-      const chainNum = chainStr != null ? parseFloat(String(chainStr).replace(/,/g, '')) : NaN;
-      const chainVault = Number.isFinite(chainNum) ? chainNum : null;
-
-      if (apiRes.status === 'fulfilled') {
-        const data = apiRes.value.data || {};
-        const reserved = Number(data.reservedUsdc) || 0;
-        const vault = chainVault != null ? chainVault : Number(data.onChainVaultUsdc) || 0;
+      const { data } = await api.get('/orderbook/vault', {
+        params: { walletAddress: walletAddr },
+        timeout: 15000,
+      });
+      const reserved = Number(data?.reservedUsdc) || 0;
+      const vault = Number(data?.onChainVaultUsdc);
+      if (Number.isFinite(vault)) {
         return Math.max(0, vault - reserved);
       }
-      if (chainVault != null) {
-        return Math.max(0, chainVault);
-      }
-      return 0;
     } catch {
-      return 0;
+      /* fall through to chain read */
     }
+
+    try {
+      const chainStr = await getTradingVaultBalance(walletAddr);
+      const chainNum = chainStr != null ? parseFloat(String(chainStr).replace(/,/g, '')) : NaN;
+      if (Number.isFinite(chainNum)) return Math.max(0, chainNum);
+    } catch {
+      /* ignore */
+    }
+    return 0;
   }, []);
 
   /** Fund vault via wallet until backend sees enough available USDC for this buy (or failure). */
@@ -295,15 +295,15 @@ export default function OrderbookTradePanel({
         'warning'
       );
       await depositTradingVault(depositAmt);
-      for (let i = 0; i < 48; i++) {
-        await new Promise((r) => setTimeout(r, 1500));
+      for (let i = 0; i < 24; i++) {
+        await new Promise((r) => setTimeout(r, 800));
         avail = await readVaultAvailableUsdc(walletAddr);
         if (avail >= requiredUsdc - 1e-6) break;
       }
       lastVaultFpRef.current = '';
       await refreshVault();
       if (avail < requiredUsdc - 1e-6) {
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 1200));
         avail = await readVaultAvailableUsdc(walletAddr);
       }
       if (avail < requiredUsdc - 1e-6) {

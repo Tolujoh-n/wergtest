@@ -20,6 +20,7 @@ function createReadOnlyJsonRpcProvider(urlIndex = 0) {
 async function readUsdcViaBackend(owner, spender) {
   const { data } = await api.get('/config/blockchain/usdc-state', {
     params: { wallet: owner, spender },
+    timeout: 12000,
   });
   if (!data?.ok) {
     throw new Error(data?.message || 'Backend USDC read failed');
@@ -27,7 +28,116 @@ async function readUsdcViaBackend(owner, spender) {
   return { balance: data.balanceWei, allowance: data.allowanceWei };
 }
 
-/** USDC view calls via public Base RPC (MetaMask eth_call often fails with -32603). */
+const USDC_READ_CACHE_MS = 20000;
+const usdcReadCache = new Map();
+const usdcReadInflight = new Map();
+let usdcBackendCooldownUntil = 0;
+let loggedUsdcBackendFail = false;
+let contractVerifyOkUntil = 0;
+const marketOptionsCache = new Map();
+const vaultBalanceCache = new Map();
+const VAULT_BALANCE_CACHE_MS = 12000;
+
+function usdcCacheKey(owner, spender) {
+  return `${String(owner).toLowerCase()}:${String(spender).toLowerCase()}`;
+}
+
+function invalidateUsdcReadCache(owner, spender) {
+  usdcReadCache.delete(usdcCacheKey(owner, spender));
+}
+
+/** Wallet → backend (when healthy) → one public RPC. Deduped + short TTL. */
+async function readUsdcBalanceAndAllowanceCached(tokenAddress, owner, spender) {
+  const ownerAddr = ethers.getAddress(owner);
+  const spenderAddr = ethers.getAddress(spender);
+  const tokenAddr = ethers.getAddress(tokenAddress);
+  const key = usdcCacheKey(ownerAddr, spenderAddr);
+  const hit = usdcReadCache.get(key);
+  if (hit && Date.now() - hit.at < USDC_READ_CACHE_MS) {
+    return { balance: hit.balance, allowance: hit.allowance };
+  }
+  if (usdcReadInflight.has(key)) return usdcReadInflight.get(key);
+
+  const work = (async () => {
+    if (typeof window.ethereum !== 'undefined') {
+      try {
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const usdc = new ethers.Contract(tokenAddr, ERC20_ABI, provider);
+        const [balance, allowance] = await Promise.all([
+          usdc.balanceOf(ownerAddr),
+          usdc.allowance(ownerAddr, spenderAddr),
+        ]);
+        const val = { balance, allowance, at: Date.now() };
+        usdcReadCache.set(key, val);
+        return { balance, allowance };
+      } catch {
+        /* fall through */
+      }
+    }
+
+    if (Date.now() >= usdcBackendCooldownUntil) {
+      try {
+        const data = await readUsdcViaBackend(ownerAddr, spenderAddr);
+        const val = { balance: data.balance, allowance: data.allowance, at: Date.now() };
+        usdcReadCache.set(key, val);
+        return { balance: data.balance, allowance: data.allowance };
+      } catch (backendErr) {
+        usdcBackendCooldownUntil = Date.now() + 120000;
+        if (!loggedUsdcBackendFail) {
+          loggedUsdcBackendFail = true;
+          console.warn('[WeRgame] USDC API read unavailable; using wallet/RPC fallback.');
+        }
+      }
+    }
+
+    const usdc = getUsdcReadContract(tokenAddr);
+    const [balance, allowance] = await Promise.all([
+      usdc.balanceOf(ownerAddr),
+      usdc.allowance(ownerAddr, spenderAddr),
+    ]);
+    const val = { balance, allowance, at: Date.now() };
+    usdcReadCache.set(key, val);
+    return { balance, allowance };
+  })().finally(() => {
+    usdcReadInflight.delete(key);
+  });
+
+  usdcReadInflight.set(key, work);
+  return work;
+}
+
+async function readUsdcBalanceAndAllowance(tokenAddress, owner, spender) {
+  const ownerAddr = ethers.getAddress(owner);
+  const spenderAddr = ethers.getAddress(spender);
+
+  try {
+    return await readUsdcBalanceAndAllowanceCached(tokenAddress, ownerAddr, spenderAddr);
+  } catch (firstErr) {
+    let lastErr = firstErr;
+    for (let i = 1; i < BASE_CHAIN_PARAMS.rpcUrls.length; i++) {
+      try {
+        const usdc = new ethers.Contract(
+          ethers.getAddress(tokenAddress),
+          ERC20_ABI,
+          createReadOnlyJsonRpcProvider(i)
+        );
+        const [balance, allowance] = await Promise.all([
+          usdc.balanceOf(ownerAddr),
+          usdc.allowance(ownerAddr, spenderAddr),
+        ]);
+        return { balance, allowance };
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw new Error(
+      `Could not read USDC on ${BASE_CHAIN_PARAMS.chainName}. ` +
+        `(${lastErr?.shortMessage || lastErr?.message || lastErr})`
+    );
+  }
+}
+
+/** USDC view calls via public Base RPC. */
 function getUsdcReadContract(tokenAddress) {
   const tokenAddr = ethers.getAddress(tokenAddress);
   const provider = createReadOnlyJsonRpcProvider();
@@ -44,40 +154,6 @@ async function assertWalletOnBaseChain() {
       `Wrong network in MetaMask (chain ${chainId}). Switch to ${BASE_CHAIN_PARAMS.chainName} (${BASE_CHAIN_PARAMS.chainId} / chain id ${BASE_CHAIN_NUMERIC_ID}).`
     );
   }
-}
-
-async function readUsdcBalanceAndAllowance(tokenAddress, owner, spender) {
-  const ownerAddr = ethers.getAddress(owner);
-  const spenderAddr = ethers.getAddress(spender);
-
-  try {
-    return await readUsdcViaBackend(ownerAddr, spenderAddr);
-  } catch (backendErr) {
-    console.warn('[WeRgame] USDC read via API failed, trying public RPC:', backendErr?.message || backendErr);
-  }
-
-  let lastErr = null;
-  for (let i = 0; i < BASE_CHAIN_PARAMS.rpcUrls.length; i++) {
-    try {
-      const usdc = new ethers.Contract(
-        ethers.getAddress(tokenAddress),
-        ERC20_ABI,
-        createReadOnlyJsonRpcProvider(i)
-      );
-      const [balance, allowance] = await Promise.all([
-        usdc.balanceOf(ownerAddr),
-        usdc.allowance(ownerAddr, spenderAddr),
-      ]);
-      return { balance, allowance };
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-
-  throw new Error(
-    `Could not read USDC on ${BASE_CHAIN_PARAMS.chainName} (browser RPC failed). Is the backend running? ` +
-      `(${lastErr?.shortMessage || lastErr?.message || lastErr})`
-  );
 }
 
 // Contract ABI (will be generated from compilation)
@@ -266,7 +342,13 @@ export const getUsdcBalance = async (address) => {
     throw new Error('USDC address not set (REACT_APP_USDC_ADDRESS)');
   }
   try {
-    const { balance } = await readUsdcViaBackend(ethers.getAddress(address), getContractAddress());
+    const owner = ethers.getAddress(address);
+    const spender = getContractAddress();
+    const { balance } = await readUsdcBalanceAndAllowanceCached(
+      usdcAddr,
+      owner,
+      spender && ethers.isAddress(spender) ? spender : owner
+    );
     return unitsToUsdc(balance);
   } catch {
     const usdc = getUsdcReadContract(usdcAddr);
@@ -319,9 +401,14 @@ export async function assertUsdcMatchesContract() {
     throw new Error('USDC address not set (REACT_APP_USDC_ADDRESS)');
   }
 
+  if (Date.now() < contractVerifyOkUntil) return;
+
   try {
-    const { data } = await api.get('/config/blockchain/verify');
-    if (data?.ok && data?.usdcMatch) return;
+    const { data } = await api.get('/config/blockchain/verify', { timeout: 12000 });
+    if (data?.ok && data?.usdcMatch) {
+      contractVerifyOkUntil = Date.now() + 300000;
+      return;
+    }
     if (data && !data.usdcMatch) {
       throw new Error(
         `USDC token mismatch: WeRgame uses ${data.onChainUsdcFromWeRgame} but config has ${data.usdcAddress}. ` +
@@ -333,7 +420,7 @@ export async function assertUsdcMatchesContract() {
     }
   } catch (e) {
     if (e?.response?.status) throw e;
-    console.warn('[WeRgame] verify via API failed, falling back to RPC:', e?.message || e);
+    /* verify via API failed — fall back to one RPC read */
   }
 
   const c = getContractReadOnly();
@@ -346,6 +433,7 @@ export async function assertUsdcMatchesContract() {
         'Update frontend/.env, restart npm start, and confirm USDC_ADDRESS matches the token wired in WeRgame at deploy.'
     );
   }
+  contractVerifyOkUntil = Date.now() + 300000;
 }
 
 /**
@@ -408,11 +496,13 @@ export async function ensureUsdcAllowance(requiredUnits) {
     throw new Error('USDC approve transaction failed');
   }
 
-  for (let i = 0; i < 8; i++) {
+  invalidateUsdcReadCache(owner, spender);
+
+  for (let i = 0; i < 4; i++) {
     ({ allowance } = await readUsdcBalanceAndAllowance(tokenAddr, owner, spender));
     allowanceBn = toUint256BigInt(allowance);
     if (allowanceBn >= req) return;
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 400));
   }
 
   throw new Error(
@@ -598,6 +688,14 @@ export const depositTradingVault = async (amountUsdc) => {
   await ensureUsdcAllowance(amountUnits);
   const tx = await contract.depositTradingVault(amountUnits);
   const receipt = await tx.wait();
+  try {
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const signer = await provider.getSigner();
+    const addr = await signer.getAddress();
+    vaultBalanceCache.delete(String(addr).toLowerCase());
+  } catch {
+    /* ignore */
+  }
   return receipt.hash;
 };
 
@@ -616,9 +714,15 @@ export const withdrawTradingVaultWithAuth = async (amountWei, nonce, deadline, s
 
 export const getTradingVaultBalance = async (userAddress) => {
   if (!userAddress || !ethers.isAddress(userAddress)) return '0';
+  const key = String(userAddress).toLowerCase();
+  const hit = vaultBalanceCache.get(key);
+  if (hit && Date.now() - hit.at < VAULT_BALANCE_CACHE_MS) return hit.val;
+
   const contract = getContractReadOnly();
   const bal = await contract.tradingVaultBalances(userAddress);
-  return unitsToUsdc(bal);
+  const val = unitsToUsdc(bal);
+  vaultBalanceCache.set(key, { at: Date.now(), val });
+  return val;
 };
 
 export const claimOrderbookPositionWithAuth = async (
@@ -685,11 +789,19 @@ export const getFees = async () => {
  * Boost Prediction Functions
  */
 
-// Get market options from contract (read-only, for validation before staking)
+// Get market options from contract (read-only, cached)
 export const getMarketOptions = async (marketId) => {
+  const id = String(marketId);
+  const cached = marketOptionsCache.get(id);
+  if (cached && Date.now() - cached.at < 300000) return cached.options;
+
   const contract = getContractReadOnly();
   const options = await contract.getMarketOptions(marketId);
-  return Array.isArray(options) ? options.map((o) => (typeof o === 'string' ? o : String(o || '').trim())) : [];
+  const normalized = Array.isArray(options)
+    ? options.map((o) => (typeof o === 'string' ? o : String(o || '').trim()))
+    : [];
+  marketOptionsCache.set(id, { at: Date.now(), options: normalized });
+  return normalized;
 };
 
 /** Stake USDC into boost; funds `claimPredictionWinsPool` on-chain (same pool used by claimPredictionWinsWithAuth). */

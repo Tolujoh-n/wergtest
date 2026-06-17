@@ -23,7 +23,6 @@ import {
   unitsToUsdc,
   addBoostStake,
   withdrawBoostStake,
-  getMarketOptions,
   getBlockchainErrorMessage,
   hasSufficientEth,
   setContractAddress,
@@ -98,9 +97,9 @@ async function ensureGasOrDrip(walletAddress, { label, showNotification } = {}) 
     }
 
     // Wait for balance to update (RPC + chain finality)
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 6; i++) {
       // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 800));
       try {
         // eslint-disable-next-line no-await-in-loop
         const ok = await hasSufficientEth(walletAddress, 0);
@@ -166,6 +165,10 @@ const MatchDetail = () => {
   const ensureLinkedWallet = useCallback(async () => {
     const addr = account || (await ensureConnected());
     if (!addr) throw new Error('Wallet not connected');
+    const linked = user?.walletAddress;
+    if (linked && String(linked).toLowerCase() === String(addr).toLowerCase()) {
+      return addr;
+    }
     try {
       await api.post('/auth/wallets/link', { address: addr });
       return addr;
@@ -177,7 +180,7 @@ const MatchDetail = () => {
       }
       throw e;
     }
-  }, [account, ensureConnected]);
+  }, [account, ensureConnected, user?.walletAddress]);
 
   // Check if predictions are locked
   const isLocked = useCallback(() => {
@@ -352,43 +355,22 @@ const MatchDetail = () => {
             }
           }
 
-          // Check wallet gas balance before popping wallet for signature.
+          // Wallet + gas, then on-chain stake (skip slow pre-validation RPC calls).
+          let linked;
           try {
-            const linked = await ensureLinkedWallet();
-            if (linked) {
-              const ok = await ensureGasOrDrip(linked, { label: 'boost stake' });
-              if (!ok) return;
-            }
+            linked = await ensureLinkedWallet();
+            const ok = await ensureGasOrDrip(linked, { label: 'boost stake' });
+            if (!ok) return;
           } catch (e) {
             if (String(e?.message || '') === 'WALLET_IN_USE') return;
-            console.warn('Could not verify wallet balance before boost stake:', e);
+            console.warn('Could not verify wallet before boost stake:', e);
+            linked = account || (await ensureConnected());
+            if (!linked) return;
           }
-          
+
           try {
-            // Validate outcome against contract options so we get a clear error instead of "missing revert data"
-            let contractOptions = [];
-            try {
-              contractOptions = await getMarketOptions(currentItem.marketId);
-            } catch (e) {
-              console.warn('Could not fetch market options from chain:', e);
-            }
-            if (contractOptions.length > 0) {
-              const outcomeTrimmed = String(normalizedOutcome || '').trim();
-              const isAllowed = contractOptions.some(
-                (opt) => String(opt || '').trim() === outcomeTrimmed
-              );
-              if (!isAllowed) {
-                showNotification(
-                  `Your selection is not a valid option for this market on the blockchain. Valid options: ${contractOptions.join(', ')}. Please refresh or contact admin.`,
-                  'error'
-                );
-                return;
-              }
-            }
-            // Stake on blockchain first - wait for transaction to complete
-            showNotification('Sending transaction to blockchain...', 'info');
+            showNotification('Confirm in your wallet…', 'info');
             const txHash = await stakeBoost(currentItem.marketId, normalizedOutcome, parseFloat(amount));
-            showNotification(`Transaction confirmed! TX: ${txHash.slice(0, 10)}...`, 'success');
 
             try {
               await api.post('/transactions', {
@@ -403,12 +385,10 @@ const MatchDetail = () => {
             } catch {
               // ignore logging failures
             }
-            
-            // Then create in backend only after blockchain success (send wallet so backend can set claimable on resolve)
-            const linked = await ensureLinkedWallet();
+
             await api.post('/predictions/boost', {
               [isPoll ? 'pollId' : 'matchId']: itemId,
-              outcome,
+              outcome: normalizedOutcome,
               amount: parseFloat(amount),
               type: 'boost',
               walletAddress: linked || undefined,
@@ -427,7 +407,8 @@ const MatchDetail = () => {
       await fetchData();
       await fetchUserPrediction();
     } catch (error) {
-      showNotification(error.response?.data?.message || 'Failed to submit prediction', 'error');
+      showNotification(error.response?.data?.message || error.message || 'Failed to submit prediction', 'error');
+      throw error;
     }
   };
 
@@ -511,16 +492,22 @@ const MatchDetail = () => {
       
       try {
         let txHash = '';
+        let linked;
+        try {
+          linked = await ensureLinkedWallet();
+          const ok = await ensureGasOrDrip(linked, { label: action === 'add' ? 'boost add' : 'boost withdraw' });
+          if (!ok) return;
+        } catch (e) {
+          if (String(e?.message || '') === 'WALLET_IN_USE') return;
+          linked = account || null;
+        }
+
         if (action === 'add') {
-          // Add stake on blockchain first
-          showNotification('Sending transaction to blockchain...', 'info');
+          showNotification('Confirm in your wallet…', 'info');
           txHash = await addBoostStake(item.marketId, normalizedOutcome, parseFloat(amount));
-          showNotification(`Transaction confirmed! TX: ${txHash.slice(0, 10)}...`, 'success');
         } else if (action === 'withdraw') {
-          // Withdraw stake on blockchain first
-          showNotification('Sending transaction to blockchain...', 'info');
+          showNotification('Confirm in your wallet…', 'info');
           txHash = await withdrawBoostStake(item.marketId, normalizedOutcome, parseFloat(amount));
-          showNotification(`Transaction confirmed! TX: ${txHash.slice(0, 10)}...`, 'success');
         }
 
         if (txHash) {
@@ -541,7 +528,11 @@ const MatchDetail = () => {
         
         // Then update backend only after blockchain success
         const actualPredictionId = prediction?._id || predictionId;
-        const linked = await ensureLinkedWallet();
+        if (!actualPredictionId) {
+          showNotification('Could not find your boost position. Please refresh the page.', 'error');
+          return;
+        }
+        if (!linked) linked = await ensureLinkedWallet();
         const { data: stakeResult } = await api.post(`/predictions/boost/${actualPredictionId}/stake`, {
           action,
           amount: parseFloat(amount),
@@ -565,7 +556,8 @@ const MatchDetail = () => {
       }
     } catch (error) {
       console.error('Error in stake action:', error);
-      showNotification(error.message || `Failed to ${action} stake`, 'error');
+      showNotification(error.response?.data?.message || error.message || `Failed to ${action} stake`, 'error');
+      throw error;
     }
   };
 
@@ -862,8 +854,8 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
           ? prediction.outcome
           : freePickerOutcome;
       await onPredict(outcomeForSubmit, stake);
-      await Promise.all([fetchFreeJackpotStats(), reloadFreeTicketData()]);
       setFreePickerOpen(false);
+      Promise.all([fetchFreeJackpotStats(), reloadFreeTicketData()]).catch(() => {});
     } finally {
       setFreePredictLoading(false);
     }
@@ -1178,6 +1170,7 @@ const BoostMatchView = ({
   const [fees, setFees] = useState({ platformFee: 10, boostJackpotFee: 5 });
   const [goldenRanges, setGoldenRanges] = useState([]);
   const [boostStats, setBoostStats] = useState(null);
+  const [boostBusy, setBoostBusy] = useState(false);
   const { showNotification } = useNotification();
   useWallet();
 
@@ -1217,6 +1210,49 @@ const BoostMatchView = ({
     load();
     fetchBoostStats();
   }, [fetchBoostStats, item?.boostPool]);
+
+  useEffect(() => {
+    fetchBoostStats();
+  }, [boostPredictions, fetchBoostStats]);
+
+  const handleConfirmBoost = async () => {
+    if (locked || !selectedOutcome || !amount || boostBusy) return;
+    setBoostBusy(true);
+    try {
+      const existing = findBoostForOption(selectedOutcome);
+      if (existing) {
+        await onStakeAction(existing._id, 'add', amount);
+      } else {
+        await onPredict(selectedOutcome, amount);
+      }
+      await fetchBoostStats();
+      onRefreshPrediction?.();
+      setShowPredictModal(false);
+      setAmount('');
+      setSelectedOutcome(null);
+    } catch {
+      /* parent shows notification */
+    } finally {
+      setBoostBusy(false);
+    }
+  };
+
+  const handleConfirmAddStake = async () => {
+    if (locked || !stakeAmount || !stakeTargetPrediction || boostBusy) return;
+    setBoostBusy(true);
+    try {
+      await onStakeAction(stakeTargetPrediction._id, 'add', stakeAmount);
+      await fetchBoostStats();
+      onRefreshPrediction?.();
+      setShowStakeModal(false);
+      setStakeAmount('');
+      setStakeTargetPrediction(null);
+    } catch {
+      /* parent shows notification */
+    } finally {
+      setBoostBusy(false);
+    }
+  };
 
   const goldenTicketsForStake = (stakeUsdc) => {
     const amt = Number(stakeUsdc) || 0;
@@ -1596,8 +1632,8 @@ const BoostMatchView = ({
                   type="button"
 
                   onClick={() => openBoostModal(null)}
-
-                  className="px-5 py-2.5 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition-colors"
+                  disabled={boostBusy}
+                  className="px-5 py-2.5 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition-colors disabled:opacity-50"
 
                 >
 
@@ -1998,22 +2034,15 @@ const BoostMatchView = ({
                 <div className="flex space-x-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (!locked && selectedOutcome && amount) {
-                        onPredict(selectedOutcome, amount);
-                        setShowPredictModal(false);
-                        setAmount('');
-                        setSelectedOutcome(null);
-                      }
-                    }}
-                    disabled={locked || !selectedOutcome || !amount}
+                    onClick={handleConfirmBoost}
+                    disabled={locked || !selectedOutcome || !amount || boostBusy}
                     className={`flex-1 px-4 py-2 rounded-lg ${
                       locked
                         ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                         : 'bg-purple-600 text-white hover:bg-purple-700'
                     } disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
-                    Confirm boost
+                    {boostBusy ? 'Submitting…' : 'Confirm boost'}
                   </button>
                   <button
                     type="button"
@@ -2078,22 +2107,15 @@ const BoostMatchView = ({
                 <div className="flex space-x-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (!locked && stakeAmount) {
-                        onStakeAction(stakeTargetPrediction._id, 'add', stakeAmount);
-                        setShowStakeModal(false);
-                        setStakeAmount('');
-                        setStakeTargetPrediction(null);
-                      }
-                    }}
-                    disabled={locked}
+                    onClick={handleConfirmAddStake}
+                    disabled={locked || boostBusy || !stakeAmount}
                     className={`flex-1 px-4 py-2 rounded-lg ${
                       locked
                         ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                         : 'bg-green-500 text-white hover:bg-green-600'
-                    }`}
+                    } disabled:opacity-50`}
                   >
-                    Add
+                    {boostBusy ? 'Submitting…' : 'Add'}
                   </button>
                   <button
                     type="button"
@@ -2176,6 +2198,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
   const [predictions, setPredictions] = useState({}); // Map of outcome -> prediction
   const [orderbookPositions, setOrderbookPositions] = useState([]);
   const [orderbookPositionsLoading, setOrderbookPositionsLoading] = useState(false);
+  const [tradeSubmitting, setTradeSubmitting] = useState(false);
   const [settlingOrders, setSettlingOrders] = useState([]);
   const [, setRestingLiquidityOrders] = useState([]);
   const [prices, setPrices] = useState({});
@@ -3204,8 +3227,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       return;
     }
 
-    // Wallet will auto-connect when blockchain function is called
-    
+    setTradeSubmitting(true);
     try {
       if (tradeType === 'buy') {
         // Check if marketId exists and market is initialized
@@ -3248,42 +3270,20 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
           }
         }
         
-        // Optional: validate outcome against contract options to avoid obscure reverts
-        // Check wallet gas balance before popping wallet for signature.
+        let linked;
         try {
-          const amountNum = parseFloat(amount);
-          if (!Number.isNaN(amountNum) && amountNum > 0) {
-            const linked = await ensureLinkedWallet();
-            const ok = await ensureGasOrDrip(linked, { label: 'market buy' });
-            if (!ok) return;
-          }
+          linked = await ensureLinkedWallet();
+          const ok = await ensureGasOrDrip(linked, { label: 'market buy' });
+          if (!ok) return;
         } catch (e) {
           if (String(e?.message || '') === 'WALLET_IN_USE') return;
-          console.warn('Could not verify wallet balance before market buy:', e);
+          console.warn('Could not verify wallet before market buy:', e);
+          linked = account || null;
         }
 
         try {
-          const contractOptions = await getMarketOptions(itemData.marketId);
-          if (contractOptions.length > 0) {
-            const outcomeTrimmed = String(normalizedOutcome || '').trim();
-            const isAllowed = contractOptions.some((o) => String(o || '').trim() === outcomeTrimmed);
-            if (!isAllowed) {
-              showNotification(
-                `Your selection is not a valid option on the blockchain. Valid: ${contractOptions.join(', ')}.`,
-                'error'
-              );
-              return;
-            }
-          }
-        } catch (_) {
-          // If getMarketOptions fails (e.g. old contract), continue with buy
-        }
-
-        try {
-          // Buy on blockchain first - wait for transaction to complete
-          showNotification('Sending transaction to blockchain...', 'info');
+          showNotification('Confirm in your wallet…', 'info');
           const txHash = await buyMarketShares(itemData.marketId, normalizedOutcome, parseFloat(amount));
-          showNotification(`Transaction confirmed! TX: ${txHash.slice(0, 10)}...`, 'success');
 
           try {
             await api.post('/transactions', {
@@ -3298,12 +3298,11 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
           } catch {
             // ignore logging failures
           }
-          
-          // Then process in backend only after blockchain success
-          const linked = await ensureLinkedWallet();
+
+          if (!linked) linked = await ensureLinkedWallet();
           const buyResponse = await api.post('/predictions/market/buy', {
             [isPoll ? 'pollId' : 'matchId']: itemData._id,
-            outcome: selectedOption,
+            outcome: normalizedOutcome,
             amount: parseFloat(amount),
             walletAddress: linked || undefined,
           });
@@ -3499,6 +3498,8 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       ]);
     } catch (error) {
       showNotification(error.response?.data?.message || 'Trade failed', 'error');
+    } finally {
+      setTradeSubmitting(false);
     }
   };
 
@@ -5209,7 +5210,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
               <button
                 onClick={handleTrade}
                 disabled={(() => {
-                  if (locked) return true;
+                  if (tradeSubmitting || locked) return true;
                   if (tradeType === 'buy') {
                     return !selectedOption || !amount;
                   } else {
@@ -5248,25 +5249,29 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                     : 'bg-red-500 hover:bg-red-600 text-white'
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
-                {tradeType === 'buy' ? 'Buy' : 'Sell'}{' '}
-                {tradeType === 'buy' ? (
-                  selectedOption === 'yes' ? 'YES' :
-                  selectedOption === 'no' ? 'NO' :
-                  selectedOption === 'teamA' ? itemData.teamA :
-                  selectedOption === 'teamB' ? itemData.teamB :
-                  selectedOption === 'draw' ? 'Draw' :
-                  isPoll && itemData.optionType === 'options' ? selectedOption : ''
+                {tradeSubmitting ? (
+                  'Submitting…'
                 ) : (
-                  selectedOption === 'yes' ? 'YES' :
-                  selectedOption === 'no' ? 'NO' :
-                  selectedOption === 'teamA' ? itemData.teamA :
-                  selectedOption === 'teamB' ? itemData.teamB :
-                  selectedOption === 'draw' ? 'Draw' :
-                  isPoll && itemData.optionType === 'options' ? selectedOption : 'Shares'
+                  <>
+                    {tradeType === 'buy' ? 'Buy' : 'Sell'}{' '}
+                    {tradeType === 'buy' ? (
+                      selectedOption === 'yes' ? 'YES' :
+                      selectedOption === 'no' ? 'NO' :
+                      selectedOption === 'teamA' ? itemData.teamA :
+                      selectedOption === 'teamB' ? itemData.teamB :
+                      selectedOption === 'draw' ? 'Draw' :
+                      isPoll && itemData.optionType === 'options' ? selectedOption : ''
+                    ) : (
+                      selectedOption === 'yes' ? 'YES' :
+                      selectedOption === 'no' ? 'NO' :
+                      selectedOption === 'teamA' ? itemData.teamA :
+                      selectedOption === 'teamB' ? itemData.teamB :
+                      selectedOption === 'draw' ? 'Draw' :
+                      isPoll && itemData.optionType === 'options' ? selectedOption : 'Shares'
+                    )}
+                  </>
                 )}
               </button>
-                    </>
-                  )}
 
                   {/* User Holdings */}
                   {user && (
@@ -5311,6 +5316,8 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                       )}
                     </div>
                   )}
+                </>
+              )}
                 </>
               )}
             </div>
