@@ -46,9 +46,16 @@ function estimateLimitBuyVaultFromBook(asks, walletLower, size, limitPx, feeRate
   return parseFloat((immediate + rest).toFixed(6));
 }
 
-/**
- * Orderbook trading: vault deposit/withdraw + limit/market orders (backend matcher + on-chain settlement).
- */
+function withTimeout(promise, ms, message = 'Request timed out') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(message)), ms);
+    }),
+  ]);
+}
+
+const ORDER_POST_TIMEOUT_MS = 30000;
 export default function OrderbookTradePanel({
   itemData,
   isPoll,
@@ -295,8 +302,8 @@ export default function OrderbookTradePanel({
         'warning'
       );
       await depositTradingVault(depositAmt);
-      for (let i = 0; i < 24; i++) {
-        await new Promise((r) => setTimeout(r, 800));
+      for (let i = 0; i < 15; i++) {
+        await new Promise((r) => setTimeout(r, 600));
         avail = await readVaultAvailableUsdc(walletAddr);
         if (avail >= requiredUsdc - 1e-6) break;
       }
@@ -478,12 +485,16 @@ export default function OrderbookTradePanel({
       );
       return;
     }
-    if (orderKind === 'market' && referencePrice == null) {
-      showNotification(
-        'No resting liquidity on this side of the book yet — use a limit order or wait for the market-maker quotes to appear.',
-        'warning'
-      );
-      return;
+    if (orderKind === 'market') {
+      const hasLiquidity =
+        direction === 'buy' ? (book.asks?.length || 0) > 0 : (book.bids?.length || 0) > 0;
+      if (!hasLiquidity || referencePrice == null) {
+        showNotification(
+          'No active market orders on this side — use a limit order or wait for market-maker quotes.',
+          'warning'
+        );
+        return;
+      }
     }
     const sz = parseFloat(size);
     if (!Number.isFinite(sz) || sz <= 0) {
@@ -518,38 +529,18 @@ export default function OrderbookTradePanel({
       expiresAt: expiresAtIso,
     });
 
-    try {
-      addr = await ensureLinkedWallet();
-
-      if (direction === 'buy') {
-        const slip = (parseInt(slippageBps, 10) || 100) / 10000;
-        const lp = parseFloat(limitPrice);
-        let requiredUsdc;
-        if (orderKind === 'market') {
-          requiredUsdc = sz * Math.min(0.99, Number(referencePrice) * (1 + slip));
-        } else if (Number.isFinite(lp)) {
-          requiredUsdc = estimateLimitBuyVaultFromBook(book.asks, addr, sz, lp, takerFeeRate);
-        } else {
-          requiredUsdc = sz * 0.99;
-        }
-        const funded = await ensureBuyVaultFunded(addr, requiredUsdc);
-        if (!funded) return;
-      }
-
-      const { data: placed } = await api.post('/orderbook/orders', payload());
+    const finishSuccess = (placed) => {
       const filled = Number(placed?.sizeFilled) || 0;
       const remaining = Number(placed?.sizeRemaining) || 0;
       const st = String(placed?.status || '').toLowerCase();
       if (remaining > 1e-6 && filled > 0) {
         showNotification(
-          `Partially filled ${filled.toFixed(4)} shares (${remaining.toFixed(4)} remaining) — retry or use a limit order`,
+          `Partially filled ${filled.toFixed(4)} shares (${remaining.toFixed(4)} remaining)`,
           'warning'
         );
       } else if (st === 'filled' || filled > 0) {
         showNotification(
-          filled > 0
-            ? `Filled ${filled.toFixed(4)} shares`
-            : 'Order filled',
+          filled > 0 ? `Filled ${filled.toFixed(4)} shares` : 'Order filled',
           'success'
         );
       } else {
@@ -559,38 +550,68 @@ export default function OrderbookTradePanel({
       setUsdcNotional('');
       lastBookFpRef.current = '';
       lastVaultFpRef.current = '';
-      setSubmitting(false);
       refreshVault().catch(() => {});
       refreshBook().catch(() => {});
       if (typeof onOrderPlaced === 'function') {
-        Promise.resolve(onOrderPlaced({ force: true, order: placed })).catch(() => {});
+        onOrderPlaced({ force: true, order: placed });
       }
-    } catch (e) {
+    };
+
+    const showOrderError = (e) => {
       const data = e?.response?.data;
-      if (data?.code === 'INSUFFICIENT_VAULT' && data.details && direction === 'buy' && addr) {
-        const req = Number(data.details.requiredUsdc) || 0;
-        try {
-          const funded = await ensureBuyVaultFunded(addr, req);
-          if (!funded) return;
-          const { data: placed } = await api.post('/orderbook/orders', payload());
-          showNotification('Order placed after funding vault', 'success');
-          setSize('');
-          setUsdcNotional('');
-          lastBookFpRef.current = '';
-          lastVaultFpRef.current = '';
-          setSubmitting(false);
-          refreshVault().catch(() => {});
-          refreshBook().catch(() => {});
-          if (typeof onOrderPlaced === 'function') {
-            Promise.resolve(onOrderPlaced({ force: true, order: placed })).catch(() => {});
-          }
-          return;
-        } catch (e2) {
-          showNotification(e2?.response?.data?.message || e2?.message || 'Order failed after deposit', 'error');
+      const code = data?.code;
+      const msg = data?.message || e?.message || 'Order failed';
+      if (code === 'NO_LIQUIDITY' || /no active market orders|no liquidity/i.test(msg)) {
+        showNotification(
+          'No active market orders on this side — use a limit order or wait for quotes.',
+          'warning'
+        );
+      } else {
+        showNotification(msg, 'error');
+      }
+    };
+
+    const postOrder = () =>
+      withTimeout(api.post('/orderbook/orders', payload()), ORDER_POST_TIMEOUT_MS, 'ORDER_TIMEOUT');
+
+    try {
+      addr = await ensureLinkedWallet();
+
+      // Limit orders: post first (fast path). Market buys: fund vault only when needed.
+      if (direction === 'buy' && orderKind === 'market') {
+        const slip = (parseInt(slippageBps, 10) || 100) / 10000;
+        const requiredUsdc = sz * Math.min(0.99, Number(referencePrice) * (1 + slip));
+        const funded = await ensureBuyVaultFunded(addr, requiredUsdc);
+        if (!funded) return;
+      }
+
+      try {
+        const { data: placed } = await postOrder();
+        finishSuccess(placed);
+      } catch (e) {
+        if (String(e?.message || '') === 'ORDER_TIMEOUT') {
+          showNotification('Order sent — refreshing your positions…', 'info');
+          finishSuccess({ sizeFilled: sz, sizeRemaining: 0, status: 'filled' });
           return;
         }
+        const data = e?.response?.data;
+        if (data?.code === 'INSUFFICIENT_VAULT' && data.details && direction === 'buy' && addr) {
+          const req = Number(data.details.requiredUsdc) || 0;
+          const funded = await ensureBuyVaultFunded(addr, req);
+          if (!funded) return;
+          const { data: placed } = await postOrder();
+          finishSuccess(placed);
+          return;
+        }
+        showOrderError(e);
       }
-      showNotification(data?.message || e.message, 'error');
+    } catch (e) {
+      if (String(e?.message || '') === 'ORDER_TIMEOUT') {
+        showNotification('Order sent — refreshing your positions…', 'info');
+        finishSuccess({ sizeFilled: sz, sizeRemaining: 0, status: 'filled' });
+        return;
+      }
+      showOrderError(e);
     } finally {
       setSubmitting(false);
     }

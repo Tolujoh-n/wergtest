@@ -13,7 +13,7 @@ function formatOrderbookOrderStatusLabel(statusRaw) {
   const s = String(statusRaw ?? '')
     .toLowerCase()
     .trim();
-  if (!s) return { label: '—', filled: false };
+  if (!s) return { label: 'ΓÇö', filled: false };
   if (s === 'filled') return { label: 'Filled', filled: true };
   const label = s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   return { label, filled: false };
@@ -42,7 +42,7 @@ function OrderbookPaginator({ page, total, pageSize, setPage, className = '' }) 
   return (
     <div className={`flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 ${className}`}>
       <span>
-        Page {page} of {pages} · {total} total
+        Page {page} of {pages} ┬╖ {total} total
       </span>
       <div className="flex gap-2">
         <button
@@ -127,7 +127,10 @@ const Profile = () => {
     }
   }, []);
 
-  const fetchProfileData = useCallback(async () => {
+  const profilePollInFlightRef = React.useRef(false);
+
+  const fetchProfileData = useCallback(async (opts = {}) => {
+    const silent = opts.silent === true;
     const requestUserId = user?._id != null ? String(user._id) : null;
     if (!requestUserId) {
       clearProfileTradingState();
@@ -136,8 +139,10 @@ const Profile = () => {
       setLoading(false);
       return;
     }
+    if (profilePollInFlightRef.current && silent) return;
 
     const fetchGen = ++profileFetchGenRef.current;
+    if (!silent) profilePollInFlightRef.current = true;
     try {
       const [profileRes, predictionsRes, ordersRes, positionsRes] = await Promise.all([
         api.get('/users/profile'),
@@ -154,9 +159,12 @@ const Profile = () => {
       setPositions(positionsRes.data?.rows || []);
     } catch (error) {
       if (fetchGen !== profileFetchGenRef.current) return;
-      console.error('Error fetching profile data:', error);
-      clearProfileTradingState();
+      if (!silent) {
+        console.warn('fetchProfileData', error?.message || error);
+        clearProfileTradingState();
+      }
     } finally {
+      if (!silent) profilePollInFlightRef.current = false;
       if (fetchGen === profileFetchGenRef.current) setLoading(false);
     }
   }, [user?._id, clearProfileTradingState]);
@@ -173,22 +181,23 @@ const Profile = () => {
     clearProfileTradingState();
     fetchProfileData();
     fetchTicketBalances();
-  }, [user, fetchProfileData, fetchTicketBalances, clearProfileTradingState]);
+  }, [user?._id, fetchProfileData, fetchTicketBalances, clearProfileTradingState]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user?._id) return;
     const t = setInterval(() => {
-      fetchProfileData();
-    }, 15000);
+      if (document.visibilityState !== 'visible') return;
+      fetchProfileData({ silent: true });
+    }, 30000);
     const onVis = () => {
-      if (document.visibilityState === 'visible') fetchProfileData();
+      if (document.visibilityState === 'visible') fetchProfileData({ silent: true });
     };
     document.addEventListener('visibilitychange', onVis);
     return () => {
       clearInterval(t);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [user, fetchProfileData]);
+  }, [user?._id, fetchProfileData]);
 
   useEffect(() => {
     const fetchBalances = async () => {
@@ -238,7 +247,7 @@ const Profile = () => {
     try {
       await ensureConnected();
       if (!isBaseSepolia) {
-        showNotification('Please switch your wallet to Base to transfer', 'warning');
+        showNotification('Please switch your wallet to Base Sepolia (Base chain) to transfer', 'warning');
         return;
       }
 
@@ -318,7 +327,7 @@ const Profile = () => {
 
   const displayOptionLabel = (optionKey, marketRef) => {
     const k = String(optionKey || '').trim();
-    if (!k) return '—';
+    if (!k) return 'ΓÇö';
     if (marketRef?.teamA && marketRef?.teamB) {
       if (k === 'TeamA') return marketRef.teamA;
       if (k === 'TeamB') return marketRef.teamB;
@@ -697,7 +706,7 @@ const Profile = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-md border border-slate-200 dark:border-slate-700 p-5 flex items-center gap-4">
             <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-2xl shrink-0" aria-hidden>
-              🪙
+              ≡ƒ¬Ö
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -706,12 +715,12 @@ const Profile = () => {
               <p className="text-2xl font-bold tabular-nums text-slate-900 dark:text-white">
                 {ticketBalances?.normalTickets ?? stats.tickets ?? 0}
               </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Resets daily · use on free predictions</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Resets daily ┬╖ use on free predictions</p>
             </div>
           </div>
           <div className="bg-gradient-to-br from-amber-50 to-white dark:from-amber-950/40 dark:to-gray-800 rounded-xl shadow-md border border-amber-200/80 dark:border-amber-800/60 p-5 flex items-center gap-4">
             <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-900/50 flex items-center justify-center text-2xl shrink-0" aria-hidden>
-              ⭐
+              Γ¡É
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
@@ -729,26 +738,26 @@ const Profile = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
           <StatCard
             title="Current Streak"
-            value={`🔥 ${stats.streak}`}
-            icon="⚡"
+            value={`≡ƒöÑ ${stats.streak}`}
+            icon="ΓÜí"
             color="orange"
           />
           <StatCard
             title="Win Rate"
             value={`${winRate}%`}
-            icon="📊"
+            icon="≡ƒôè"
             color="green"
           />
           <StatCard
             title="Total Predictions"
             value={stats.totalPredictions}
-            icon="🎯"
+            icon="≡ƒÄ»"
             color="blue"
           />
           <StatCard
             title="Correct Predictions"
             value={stats.correctPredictions}
-            icon="✅"
+            icon="Γ£à"
             color="purple"
           />
         </div>
@@ -909,13 +918,13 @@ const Profile = () => {
                               >
                                 <td className="py-2.5 pr-4 pl-1 text-gray-900 dark:text-white font-medium">{label}</td>
                                 <td className="py-2.5 pr-4 text-gray-800 dark:text-gray-200">
-                                  {displayOptionLabel(optionKey, p.match)} · {side}
+                                  {displayOptionLabel(optionKey, p.match)} ┬╖ {side}
                                 </td>
                                 <td className="py-2.5 pr-4 tabular-nums text-gray-800 dark:text-gray-200">
                                   {Number(p.shares || 0).toFixed(4)}
                                 </td>
                                 <td className="py-2.5 pr-4 tabular-nums text-gray-800 dark:text-gray-200">
-                                  {avg != null ? avg.toFixed(4) : '—'}
+                                  {avg != null ? avg.toFixed(4) : 'ΓÇö'}
                                 </td>
                                 <td className="py-2.5 pr-4 tabular-nums text-gray-800 dark:text-gray-200">
                                   {mid != null ? (
@@ -940,13 +949,13 @@ const Profile = () => {
                                       : 'text-rose-600 dark:text-rose-400'
                                   }`}
                                 >
-                                  {pnl != null ? formatUsdAmount(pnl) : '—'}
+                                  {pnl != null ? formatUsdAmount(pnl) : 'ΓÇö'}
                                 </td>
                                 <td className="py-2.5 pr-1">
                                   {resolvedBook ? (
-                                    <span className="text-xs text-gray-400 dark:text-gray-500">—</span>
+                                    <span className="text-xs text-gray-400 dark:text-gray-500">ΓÇö</span>
                                   ) : closingOrderbookPosId === String(p._id) ? (
-                                    <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">Closing…</span>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">ClosingΓÇª</span>
                                   ) : (
                                     <button
                                       type="button"
@@ -1042,7 +1051,7 @@ const Profile = () => {
                               >
                                 <td className="py-2.5 pr-4 pl-1 text-gray-900 dark:text-white font-medium">{label}</td>
                                 <td className="py-2.5 pr-4 text-gray-800 dark:text-gray-200">
-                                  {displayOptionLabel(o.optionKey, o.match)} · {o.side}
+                                  {displayOptionLabel(o.optionKey, o.match)} ┬╖ {o.side}
                                 </td>
                                 <td className="py-2.5 pr-4 text-gray-800 dark:text-gray-200 capitalize">{o.direction}</td>
                                 <td className="py-2.5 pr-4 text-gray-800 dark:text-gray-200 capitalize text-xs">
@@ -1055,7 +1064,7 @@ const Profile = () => {
                                   {Number(o.sizeFilled ?? 0).toFixed(4)}
                                 </td>
                                 <td className="py-2.5 pr-4 tabular-nums text-gray-800 dark:text-gray-200">
-                                  {o.limitPrice != null ? Number(o.limitPrice).toFixed(3) : '—'}
+                                  {o.limitPrice != null ? Number(o.limitPrice).toFixed(3) : 'ΓÇö'}
                                 </td>
                                 <td className="py-2.5 pr-4 tabular-nums text-gray-800 dark:text-gray-200">
                                   {Number(o.sizeRemaining || 0).toFixed(4)}
@@ -1072,13 +1081,13 @@ const Profile = () => {
                                   })()}
                                 </td>
                                 <td className="py-2.5 pr-4 text-gray-600 dark:text-gray-400 text-xs tabular-nums">
-                                  {o.expiresAt ? new Date(o.expiresAt).toLocaleString() : '—'}
+                                  {o.expiresAt ? new Date(o.expiresAt).toLocaleString() : 'ΓÇö'}
                                 </td>
                                 <td className="py-2.5 pr-1">
                                   {['open', 'partially_filled', 'pending'].includes(normalizeTradeOrderStatus(o)) ? (
                                     cancelingProfileOrderId === String(o._id ?? o.id) ? (
                                       <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-                                        Canceling…
+                                        CancelingΓÇª
                                       </span>
                                     ) : (
                                       <button
@@ -1104,7 +1113,7 @@ const Profile = () => {
                                       </button>
                                     )
                                   ) : (
-                                    <span className="text-xs text-gray-400 dark:text-gray-500">—</span>
+                                    <span className="text-xs text-gray-400 dark:text-gray-500">ΓÇö</span>
                                   )}
                                 </td>
                               </tr>
@@ -1170,7 +1179,7 @@ const Profile = () => {
                           >
                             <td className="py-2.5 pr-4 pl-1 text-gray-900 dark:text-white font-medium">{label}</td>
                             <td className="py-2.5 pr-4 text-gray-800 dark:text-gray-200">
-                              {displayOptionLabel(o.optionKey, o.match)} · {o.side}
+                              {displayOptionLabel(o.optionKey, o.match)} ┬╖ {o.side}
                             </td>
                             <td className="py-2.5 pr-4 text-gray-800 dark:text-gray-200 capitalize">{o.direction}</td>
                             <td className="py-2.5 pr-4 text-gray-800 dark:text-gray-200 capitalize text-xs">
@@ -1183,7 +1192,7 @@ const Profile = () => {
                               {Number(o.sizeFilled ?? 0).toFixed(4)}
                             </td>
                             <td className="py-2.5 pr-4 tabular-nums text-gray-800 dark:text-gray-200">
-                              {o.limitPrice != null ? Number(o.limitPrice).toFixed(3) : '—'}
+                              {o.limitPrice != null ? Number(o.limitPrice).toFixed(3) : 'ΓÇö'}
                             </td>
                             <td className="py-2.5 pr-4 text-gray-700 dark:text-gray-300 text-xs">
                               {(() => {
@@ -1197,7 +1206,7 @@ const Profile = () => {
                               })()}
                             </td>
                             <td className="py-2.5 pr-1 text-gray-600 dark:text-gray-400 text-xs tabular-nums">
-                              {o.updatedAt ? new Date(o.updatedAt).toLocaleString() : '—'}
+                              {o.updatedAt ? new Date(o.updatedAt).toLocaleString() : 'ΓÇö'}
                             </td>
                           </tr>
                         );

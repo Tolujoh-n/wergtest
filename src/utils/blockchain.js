@@ -436,11 +436,28 @@ export async function assertUsdcMatchesContract() {
   contractVerifyOkUntil = Date.now() + 300000;
 }
 
+/** Wallet-only USDC read (never vault). Bypasses cache for approve / boost flows. */
+async function readWalletUsdcFresh(tokenAddress, owner, spender) {
+  const ownerAddr = ethers.getAddress(owner);
+  const spenderAddr = ethers.getAddress(spender);
+  const tokenAddr = ethers.getAddress(tokenAddress);
+  if (typeof window.ethereum !== 'undefined') {
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const usdc = new ethers.Contract(tokenAddr, ERC20_ABI, provider);
+    const [balance, allowance] = await Promise.all([
+      usdc.balanceOf(ownerAddr),
+      usdc.allowance(ownerAddr, spenderAddr),
+    ]);
+    return { balance, allowance };
+  }
+  return readUsdcBalanceAndAllowance(tokenAddr, ownerAddr, spenderAddr);
+}
+
 /**
  * Ensure ERC20 allowance for the WeRgame contract to pull `requiredUnits` (USDC base units).
- * Verifies allowance after approve to avoid MetaMask estimateGas failing on addLiquidity while allowance is still 0.
+ * Boost / market trades use wallet USDC only — not the trading vault.
  */
-export async function ensureUsdcAllowance(requiredUnits) {
+export async function ensureUsdcAllowance(requiredUnits, opts = {}) {
   const req = toUint256BigInt(requiredUnits);
   if (req <= 0n) return;
 
@@ -466,31 +483,25 @@ export async function ensureUsdcAllowance(requiredUnits) {
   const tokenAddr = ethers.getAddress(usdcAddr);
   const usdcWrite = new ethers.Contract(tokenAddr, ERC20_ABI, signer);
 
-  let { balance, allowance } = await readUsdcBalanceAndAllowance(tokenAddr, owner, spender);
+  invalidateUsdcReadCache(owner, spender);
+
+  let { balance, allowance } = await readWalletUsdcFresh(tokenAddr, owner, spender);
   let balanceBn = toUint256BigInt(balance);
   let allowanceBn = toUint256BigInt(allowance);
 
   if (balanceBn < req) {
     throw new Error(
-      `Insufficient USDC balance. Need at least ${unitsToUsdc(req)} USDC; you have ${unitsToUsdc(balanceBn)}. ` +
-        'Fund your wallet with USDC on Base (bridge from Ethereum or buy on an exchange).'
+      `Insufficient USDC in your wallet. Need at least ${unitsToUsdc(req)} USDC; you have ${unitsToUsdc(balanceBn)} in your wallet. ` +
+        'Boost uses wallet balance only (not the trading vault). Add USDC to your wallet on Base.'
     );
   }
 
   if (allowanceBn >= req) return;
 
-  // Exact allowance only (no unlimited MaxUint256) so wallets show the real USDC amount.
-  const MAX_UINT = ethers.MaxUint256;
-  if (allowanceBn > 0n && allowanceBn < MAX_UINT && allowanceBn > req) {
-    const resetTx = await usdcWrite.approve(spender, 0);
-    const resetRc = await resetTx.wait();
-    if (resetRc.status !== 1) {
-      throw new Error('USDC approve reset failed');
-    }
-    allowanceBn = 0n;
-  }
+  // Approve slightly above required to avoid rounding edge cases on repeat stakes.
+  const approveAmount = req + req / 20n + 1n;
 
-  const tx = await usdcWrite.approve(spender, req);
+  const tx = await usdcWrite.approve(spender, approveAmount);
   const receipt = await tx.wait();
   if (receipt.status !== 1) {
     throw new Error('USDC approve transaction failed');
@@ -498,16 +509,15 @@ export async function ensureUsdcAllowance(requiredUnits) {
 
   invalidateUsdcReadCache(owner, spender);
 
-  for (let i = 0; i < 4; i++) {
-    ({ allowance } = await readUsdcBalanceAndAllowance(tokenAddr, owner, spender));
+  for (let i = 0; i < 8; i++) {
+    ({ allowance } = await readWalletUsdcFresh(tokenAddr, owner, spender));
     allowanceBn = toUint256BigInt(allowance);
     if (allowanceBn >= req) return;
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 500));
   }
 
   throw new Error(
-    'USDC allowance is still too low after approve. Confirm the Approve tx in MetaMask, stay on Base, ' +
-      'and ensure REACT_APP_CONTRACT_ADDRESS matches the deployed WeRgame you are calling.'
+    'USDC approval is still pending. Confirm the Approve transaction in your wallet, wait a few seconds, then try again.'
   );
 }
 
@@ -554,9 +564,8 @@ export const getBlockchainErrorMessage = (err) => {
   const hex = extractRevertDataHex(err);
   if (hex && hex.toLowerCase().startsWith(ERC20_INSUFFICIENT_ALLOWANCE_SELECTOR)) {
     return (
-      'USDC allowance is too low for the WeRgame contract. Approve USDC when MetaMask prompts, wait for confirmation, ' +
-      'then try again. If this persists, restart the dev server and confirm REACT_APP_USDC_ADDRESS matches the token ' +
-      'returned by the contract (same as backend USDC_ADDRESS).'
+      'USDC approval is too low. Approve USDC when MetaMask prompts, wait for confirmation, then try again. ' +
+      'Boost uses your wallet USDC balance (not the trading vault).'
     );
   }
   const reason = err?.reason;

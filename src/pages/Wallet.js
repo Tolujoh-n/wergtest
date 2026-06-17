@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { useWallet } from '../context/WalletContext';
 import { useNotification } from '../components/Notification';
 import Modal from '../components/Modal';
@@ -14,13 +14,12 @@ import {
 import { ethers } from 'ethers';
 import { useAuth } from '../context/AuthContext';
 import { syncChainConfigFromServer } from '../utils/syncChainConfig';
-import { getBlockExplorerTxUrl } from '../utils/chainParams';
 
 const ITEMS_PER_PAGE = 20;
 
 export default function WalletPage() {
   const { account, connect, ensureConnected, isBaseSepolia } = useWallet();
-  const { user, refreshUser } = useAuth();
+  const { user } = useAuth();
   const { showNotification } = useNotification();
 
   const [ethBalance, setEthBalance] = useState('0');
@@ -41,6 +40,10 @@ export default function WalletPage() {
   const [vaultInfo, setVaultInfo] = useState(null);
   const [vaultDepositAmt, setVaultDepositAmt] = useState('');
   const [vaultBusy, setVaultBusy] = useState(false);
+
+  const txFetchGenRef = useRef(0);
+  const vault403NotifiedRef = useRef(false);
+  const walletDataKeyRef = useRef('');
 
   const shortAccount = useMemo(() => {
     if (!account) return '';
@@ -64,13 +67,11 @@ export default function WalletPage() {
   const ensureWalletLinked = async () => {
     if (!user || !account) return false;
     try {
-      const { data: meData } = await api.get('/auth/me');
-      const wallets = Array.isArray(meData?.user?.wallets) ? meData.user.wallets : [];
+      const { data } = await api.get('/auth/me');
+      const wallets = Array.isArray(data?.user?.wallets) ? data.user.wallets : [];
       const linked = wallets.some((w) => String(w).toLowerCase() === String(account).toLowerCase());
       if (linked) return true;
-      const { data: linkData } = await api.post('/auth/wallets/link', { address: account });
-      if (linkData?.user) refreshUser(linkData.user);
-      else await refreshUser();
+      await api.post('/auth/wallets/link', { address: account });
       return true;
     } catch (e) {
       showNotification(e.response?.data?.message || 'Link this wallet to your account first', 'warning');
@@ -78,18 +79,20 @@ export default function WalletPage() {
     }
   };
 
-  const refreshVault = async () => {
+  const refreshVault = async ({ quiet = false } = {}) => {
     if (!account) {
       setVaultInfo(null);
       return;
     }
     try {
-      if (user) await ensureWalletLinked();
+      if (user?._id) await ensureWalletLinked();
       const { data } = await api.get('/orderbook/vault', { params: { walletAddress: account } });
       setVaultInfo(data);
+      vault403NotifiedRef.current = false;
     } catch (e) {
       setVaultInfo(null);
-      if (e?.response?.status === 403) {
+      if (e?.response?.status === 403 && !quiet && !vault403NotifiedRef.current) {
+        vault403NotifiedRef.current = true;
         showNotification(
           e.response?.data?.message || 'Link this wallet to your account to view the trading vault.',
           'warning'
@@ -98,35 +101,45 @@ export default function WalletPage() {
     }
   };
 
-  const fetchTransactions = async (page = txPage) => {
+  const fetchTransactions = useCallback(async (page = 1) => {
+    if (!account) return;
+    const gen = ++txFetchGenRef.current;
     setTxLoading(true);
     try {
       const { data } = await api.get('/transactions/me', {
         params: { page, limit: ITEMS_PER_PAGE },
       });
+      if (gen !== txFetchGenRef.current) return;
       setTxRows(data?.rows || []);
       setTxPage(data?.page || page);
       setTxTotalPages(data?.totalPages || 1);
-    } catch (e) {
+    } catch {
+      if (gen !== txFetchGenRef.current) return;
       setTxRows([]);
       setTxTotalPages(1);
     } finally {
-      setTxLoading(false);
+      if (gen === txFetchGenRef.current) setTxLoading(false);
     }
-  };
+  }, [account]);
 
   useEffect(() => {
     syncChainConfigFromServer().catch(() => {});
   }, []);
 
   useEffect(() => {
-    if (account) {
-      refreshBalances();
-      refreshVault();
-      fetchTransactions(1);
+    const key = `${account || ''}:${user?._id || ''}`;
+    if (!account) {
+      walletDataKeyRef.current = '';
+      setTxRows([]);
+      setVaultInfo(null);
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account, user]);
+    if (walletDataKeyRef.current === key) return;
+    walletDataKeyRef.current = key;
+    refreshBalances();
+    refreshVault({ quiet: true });
+    fetchTransactions(1);
+  }, [account, user?._id, fetchTransactions]);
 
   const handleVaultDeposit = async () => {
     if (!account) {
@@ -142,7 +155,7 @@ export default function WalletPage() {
     try {
       await ensureConnected();
       if (!isBaseSepolia) {
-        showNotification('Please switch your wallet to Base', 'warning');
+        showNotification('Please switch your wallet to Base Sepolia', 'warning');
         return;
       }
       await syncChainConfigFromServer();
@@ -168,7 +181,7 @@ export default function WalletPage() {
     try {
       await ensureConnected();
       if (!isBaseSepolia) {
-        showNotification('Please switch your wallet to Base', 'warning');
+        showNotification('Please switch your wallet to Base Sepolia', 'warning');
         return;
       }
       const avail = Number(vaultInfo?.availableUsdc ?? 0);
@@ -212,7 +225,7 @@ export default function WalletPage() {
     try {
       await ensureConnected();
       if (!isBaseSepolia) {
-        showNotification('Please switch your wallet to Base', 'warning');
+        showNotification('Please switch your wallet to Base Sepolia', 'warning');
         return;
       }
 
@@ -398,7 +411,7 @@ export default function WalletPage() {
                     disabled={vaultBusy}
                     className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
                   >
-                    {vaultBusy ? 'Processing…' : 'Deposit to vault'}
+                    {vaultBusy ? 'ProcessingΓÇª' : 'Deposit to vault'}
                   </button>
                   <button
                     type="button"
@@ -406,7 +419,7 @@ export default function WalletPage() {
                     disabled={vaultBusy}
                     className="w-full px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50"
                   >
-                    {vaultBusy ? 'Processing…' : 'Withdraw all'}
+                    {vaultBusy ? 'ProcessingΓÇª' : 'Withdraw all'}
                   </button>
                 </div>
               </div>
@@ -433,7 +446,7 @@ export default function WalletPage() {
               Connect your wallet to see your transaction history.
             </div>
           ) : txLoading ? (
-            <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading…</div>
+            <div className="py-8 text-center text-gray-500 dark:text-gray-400">LoadingΓÇª</div>
           ) : (
             <>
               <div className="overflow-x-auto">
@@ -450,7 +463,7 @@ export default function WalletPage() {
                     {txRows.map((row) => (
                       <tr key={row._id}>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300">
-                          {row.createdAt ? new Date(row.createdAt).toLocaleString() : '—'}
+                          {row.createdAt ? new Date(row.createdAt).toLocaleString() : 'ΓÇö'}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">
                           {row.action}
@@ -460,12 +473,12 @@ export default function WalletPage() {
                             ? row.currency === 'ETH'
                               ? `${Number(row.amount).toFixed(6)} ETH`
                               : formatUsdAmount(row.amount)
-                            : '—'}
+                            : 'ΓÇö'}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-blue-600 dark:text-blue-400">
                           {row.txHash ? (
                             <a
-                              href={getBlockExplorerTxUrl(row.txHash)}
+                              href={`https://sepolia.basescan.org/tx/${String(row.txHash)}`}
                               target="_blank"
                               rel="noreferrer noopener"
                               className="hover:underline"
@@ -474,7 +487,7 @@ export default function WalletPage() {
                               {`${String(row.txHash).slice(0, 10)}...`}
                             </a>
                           ) : (
-                            '—'
+                            'ΓÇö'
                           )}
                         </td>
                       </tr>
@@ -530,7 +543,7 @@ export default function WalletPage() {
               Send <strong>Base ETH</strong> (for gas) or <strong>USDC</strong> to this address:
             </p>
             <div className="p-3 rounded-lg bg-gray-100 dark:bg-gray-700 font-mono text-sm break-all text-gray-900 dark:text-white">
-              {account || '—'}
+              {account || 'ΓÇö'}
             </div>
             <button
               type="button"
@@ -595,7 +608,7 @@ export default function WalletPage() {
               disabled={sending}
               className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
             >
-              {sending ? 'Sending…' : 'Send'}
+              {sending ? 'SendingΓÇª' : 'Send'}
             </button>
           </div>
         </Modal>

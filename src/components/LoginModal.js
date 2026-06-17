@@ -189,15 +189,6 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
 
         {view === 'login' ? (
           <>
-            <AuthTurnstileSection
-              enabled={turnstile.enabled}
-              loading={turnstile.loading}
-              siteKey={turnstile.siteKey}
-              resetKey={turnstile.resetKey}
-              onVerify={turnstile.setToken}
-              onExpire={turnstile.clearToken}
-            />
-
             <div className={authBlocked ? 'opacity-50 pointer-events-none select-none' : ''}>
               <GoogleSignInButton onSuccess={onClose} onError={setError} />
             </div>
@@ -239,6 +230,15 @@ const LoginModal = ({ onClose, onSwitchToSignup }) => {
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
                 />
               </div>
+
+              <AuthTurnstileSection
+                enabled={turnstile.enabled}
+                loading={turnstile.loading}
+                siteKey={turnstile.siteKey}
+                resetKey={turnstile.resetKey}
+                onVerify={turnstile.setToken}
+                onExpire={turnstile.clearToken}
+              />
 
               <button
                 type="button"

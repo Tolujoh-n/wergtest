@@ -23,6 +23,7 @@ import {
   unitsToUsdc,
   addBoostStake,
   withdrawBoostStake,
+  getUsdcBalance,
   getBlockchainErrorMessage,
   hasSufficientEth,
   setContractAddress,
@@ -43,6 +44,7 @@ import {
   estimateFreeJackpotPotentialWin,
   estimateMarketOrderbookPotentialWin,
 } from '../utils/predictionPayout';
+import { isEventOpenForPlay } from '../utils/eventOpen';
 
 /** Draw outcome avatar when no team image is set. */
 function DrawOutcomeAvatar({ className = 'w-11 h-11' }) {
@@ -70,6 +72,23 @@ function OutcomeOptionAvatar({ image, label, sizeClass = 'w-11 h-11' }) {
     );
   }
   return <div className={`${sizeClass} rounded-full bg-slate-200 dark:bg-slate-700 shrink-0`} />;
+}
+
+async function assertWalletUsdcForBoost(walletAddress, amountUsdc, showNotification) {
+  if (!walletAddress || !(amountUsdc > 0)) return true;
+  try {
+    const bal = parseFloat(await getUsdcBalance(walletAddress));
+    if (!Number.isFinite(bal) || bal + 1e-9 < amountUsdc) {
+      showNotification?.(
+        `Insufficient USDC in wallet (${Number.isFinite(bal) ? bal.toFixed(2) : '0'} available). Boost uses wallet balance only — not the trading vault.`,
+        'warning'
+      );
+      return false;
+    }
+    return true;
+  } catch {
+    return true;
+  }
 }
 
 async function ensureGasOrDrip(walletAddress, { label, showNotification } = {}) {
@@ -182,17 +201,10 @@ const MatchDetail = () => {
     }
   }, [account, ensureConnected, user?.walletAddress]);
 
-  // Check if predictions are locked
+  // Admin status only — not scheduled lockedTime
   const isLocked = useCallback(() => {
     const item = match || poll;
-    if (!item) return false;
-    if (item.status === 'locked') return true;
-    if (item.lockedTime) {
-      const now = new Date();
-      const lockedTime = new Date(item.lockedTime);
-      return now >= lockedTime;
-    }
-    return false;
+    return !isEventOpenForPlay(item);
   }, [match, poll]);
 
   const fetchData = useCallback(async () => {
@@ -244,7 +256,20 @@ const MatchDetail = () => {
     if (user) {
       fetchUserPrediction();
     }
-  }, [itemId, user, isPoll, type, fetchData, fetchUserPrediction]);
+  }, [itemId, user?._id, isPoll, type, fetchData, fetchUserPrediction]);
+
+  useEffect(() => {
+    if (!user?._id || type !== 'boost' || !account) return;
+    api
+      .post('/predictions/boost/reconcile-pending', { walletAddress: account })
+      .then(({ data }) => {
+        if (Number(data?.reconciled) > 0) {
+          fetchUserPrediction();
+          fetchData();
+        }
+      })
+      .catch(() => {});
+  }, [itemId, user?._id, type, account, fetchUserPrediction, fetchData]);
   
   // Refresh prediction when item resolution status changes
   useEffect(() => {
@@ -266,7 +291,7 @@ const MatchDetail = () => {
 
     // Check if locked
     const item = match || poll;
-    if (item && (item.status === 'locked' || (item.lockedTime && new Date() >= new Date(item.lockedTime)))) {
+    if (item && !isEventOpenForPlay(item)) {
       showNotification('Predictions are locked for this match/poll', 'error');
       return;
     }
@@ -361,6 +386,8 @@ const MatchDetail = () => {
             linked = await ensureLinkedWallet();
             const ok = await ensureGasOrDrip(linked, { label: 'boost stake' });
             if (!ok) return;
+            const walletOk = await assertWalletUsdcForBoost(linked, amountNum, showNotification);
+            if (!walletOk) return;
           } catch (e) {
             if (String(e?.message || '') === 'WALLET_IN_USE') return;
             console.warn('Could not verify wallet before boost stake:', e);
@@ -412,62 +439,57 @@ const MatchDetail = () => {
     }
   };
 
-  const handleStakeAction = async (predictionId, action, amount) => {
-    // Wallet will auto-connect when blockchain function is called
-    
+  const handleStakeAction = async (predictionId, action, amount, outcomeHint = null) => {
+    let txHash = '';
     try {
       const item = match || poll;
       if (!item || !item.marketId) {
         showNotification('Market not created on blockchain yet', 'error');
-        console.error('MarketId missing for item:', item?._id, 'Item data:', item);
         return;
       }
 
       const stakeIsPoll = Boolean(item.question);
-      
+
       if (!item.marketInitialized) {
         showNotification('Market is not initialized yet', 'error');
         return;
       }
-      
-      // Get prediction to get outcome - but handle case where it might not exist
+
+      const boostListEndpoint = isPoll
+        ? `/predictions/poll/${item._id}/user?type=boost`
+        : `/predictions/match/${item._id}/user?type=boost`;
+
       let prediction = null;
-      let normalizedOutcome = null;
-      
       try {
-        const predResponse = await api.get(`/predictions/${predictionId}`);
-        prediction = predResponse.data;
-        normalizedOutcome = prediction.outcome;
-      } catch (predError) {
-        // If prediction doesn't exist, try to get it from user predictions
-        try {
-          const endpoint = isPoll 
-            ? `/predictions/poll/${item._id}/user?type=boost`
-            : `/predictions/match/${item._id}/user?type=boost`;
-          const response = await api.get(endpoint);
-          const list = Array.isArray(response.data)
-            ? response.data
-            : response.data
-              ? [response.data]
-              : [];
+        const { data } = await api.get(boostListEndpoint);
+        const list = Array.isArray(data) ? data : data ? [data] : [];
+        if (predictionId) {
           prediction = list.find((p) => String(p._id) === String(predictionId)) || null;
-          if (prediction) {
-            normalizedOutcome = prediction.outcome;
-          } else {
-            throw new Error('Prediction not found');
-          }
-        } catch (err) {
-          showNotification('Could not find prediction. Please make a prediction first.', 'error');
-          return;
         }
+        if (!prediction && outcomeHint) {
+          const hint = String(outcomeHint).trim().toLowerCase();
+          prediction =
+            list.find((p) => {
+              const o = String(p.outcome || '').trim().toLowerCase();
+              if (o === hint) return true;
+              if (!isPoll) {
+                if (hint === 'draw' && o === 'draw') return true;
+                if (hint === (item.teamA || '').trim().toLowerCase() && (o === 'teama' || o === hint)) return true;
+                if (hint === (item.teamB || '').trim().toLowerCase() && (o === 'teamb' || o === hint)) return true;
+              }
+              return false;
+            }) || null;
+        }
+      } catch {
+        prediction = null;
       }
-      
-      if (!normalizedOutcome) {
-        showNotification('Could not determine outcome', 'error');
+
+      if (!prediction) {
+        showNotification('Could not find your boost position. Refresh the page and try again.', 'error');
         return;
       }
-      
-      // Normalize outcome to match contract options exactly
+
+      let normalizedOutcome = prediction.outcome;
       if (!isPoll) {
         const lower = String(normalizedOutcome || '').trim().toLowerCase();
         const teamALower = (item.teamA || '').trim().toLowerCase();
@@ -490,55 +512,68 @@ const MatchDetail = () => {
         }
       }
       
+      let linked;
       try {
-        let txHash = '';
-        let linked;
-        try {
-          linked = await ensureLinkedWallet();
-          const ok = await ensureGasOrDrip(linked, { label: action === 'add' ? 'boost add' : 'boost withdraw' });
-          if (!ok) return;
-        } catch (e) {
-          if (String(e?.message || '') === 'WALLET_IN_USE') return;
-          linked = account || null;
-        }
-
+        linked = await ensureLinkedWallet();
+        const ok = await ensureGasOrDrip(linked, { label: action === 'add' ? 'boost add' : 'boost withdraw' });
+        if (!ok) return;
         if (action === 'add') {
-          showNotification('Confirm in your wallet…', 'info');
-          txHash = await addBoostStake(item.marketId, normalizedOutcome, parseFloat(amount));
-        } else if (action === 'withdraw') {
-          showNotification('Confirm in your wallet…', 'info');
-          txHash = await withdrawBoostStake(item.marketId, normalizedOutcome, parseFloat(amount));
+          const walletOk = await assertWalletUsdcForBoost(linked, parseFloat(amount), showNotification);
+          if (!walletOk) return;
         }
+      } catch (e) {
+        if (String(e?.message || '') === 'WALLET_IN_USE') return;
+        linked = account || null;
+      }
 
-        if (txHash) {
-          try {
-            await api.post('/transactions', {
-              action: action === 'add' ? 'boost_add_stake' : 'boost_withdraw_stake',
-              txHash,
-              amount: parseFloat(amount),
-              currency: 'USDC',
-              itemType: stakeIsPoll ? 'poll' : 'match',
-              itemId: item._id,
-              meta: { outcome: normalizedOutcome },
-            });
-          } catch {
-            // ignore
-          }
+      if (action === 'add') {
+        showNotification('Confirm in your wallet…', 'info');
+        txHash = await addBoostStake(item.marketId, normalizedOutcome, parseFloat(amount));
+      } else if (action === 'withdraw') {
+        showNotification('Confirm in your wallet…', 'info');
+        txHash = await withdrawBoostStake(item.marketId, normalizedOutcome, parseFloat(amount));
+      }
+
+      if (txHash) {
+        try {
+          await api.post('/transactions', {
+            action: action === 'add' ? 'boost_add_stake' : 'boost_withdraw_stake',
+            txHash,
+            amount: parseFloat(amount),
+            currency: 'USDC',
+            itemType: stakeIsPoll ? 'poll' : 'match',
+            itemId: item._id,
+            meta: { outcome: normalizedOutcome },
+          });
+        } catch {
+          // ignore
         }
-        
-        // Then update backend only after blockchain success
-        const actualPredictionId = prediction?._id || predictionId;
-        if (!actualPredictionId) {
-          showNotification('Could not find your boost position. Please refresh the page.', 'error');
-          return;
-        }
-        if (!linked) linked = await ensureLinkedWallet();
-        const { data: stakeResult } = await api.post(`/predictions/boost/${actualPredictionId}/stake`, {
+      }
+
+      const actualPredictionId = prediction?._id || predictionId;
+      if (!actualPredictionId) {
+        showNotification('Could not find your boost position. Please refresh the page.', 'error');
+        return;
+      }
+      if (!linked) linked = await ensureLinkedWallet();
+
+      const postStakeToBackend = () =>
+        api.post(`/predictions/boost/${actualPredictionId}/stake`, {
           action,
           amount: parseFloat(amount),
           walletAddress: linked || undefined,
           txHash: txHash || undefined,
         });
+
+      try {
+        let stakeResult;
+        try {
+          ({ data: stakeResult } = await postStakeToBackend());
+        } catch (firstErr) {
+          if (!txHash) throw firstErr;
+          await new Promise((r) => setTimeout(r, 2000));
+          ({ data: stakeResult } = await postStakeToBackend());
+        }
         if (action === 'add' && Number(stakeResult?.goldenTicketsAwarded) > 0) {
           showNotification(
             `Stake added! +${stakeResult.goldenTicketsAwarded} golden ticket${stakeResult.goldenTicketsAwarded === 1 ? '' : 's'} earned`,
@@ -549,14 +584,24 @@ const MatchDetail = () => {
         }
         await fetchUserPrediction();
         await fetchData();
-      } catch (blockchainError) {
-        console.error('Blockchain transaction failed:', blockchainError);
-        showNotification(getBlockchainErrorMessage(blockchainError), 'error');
-        throw blockchainError; // Re-throw to prevent backend call
+      } catch (backendErr) {
+        if (txHash) {
+          const msg =
+            backendErr?.response?.data?.message ||
+            'Stake confirmed on-chain but saving failed. Refresh the page — your funds are on-chain.';
+          showNotification(msg, 'warning');
+          await fetchUserPrediction();
+          await fetchData();
+        }
+        throw backendErr;
       }
     } catch (error) {
+      if (txHash && error?.response) return;
       console.error('Error in stake action:', error);
-      showNotification(error.response?.data?.message || error.message || `Failed to ${action} stake`, 'error');
+      showNotification(
+        error?.response?.data?.message || getBlockchainErrorMessage(error) || `Failed to ${action} stake`,
+        'error'
+      );
       throw error;
     }
   };
@@ -1221,7 +1266,7 @@ const BoostMatchView = ({
     try {
       const existing = findBoostForOption(selectedOutcome);
       if (existing) {
-        await onStakeAction(existing._id, 'add', amount);
+        await onStakeAction(existing._id, 'add', amount, selectedOutcome);
       } else {
         await onPredict(selectedOutcome, amount);
       }
@@ -1241,7 +1286,7 @@ const BoostMatchView = ({
     if (locked || !stakeAmount || !stakeTargetPrediction || boostBusy) return;
     setBoostBusy(true);
     try {
-      await onStakeAction(stakeTargetPrediction._id, 'add', stakeAmount);
+      await onStakeAction(stakeTargetPrediction._id, 'add', stakeAmount, stakeTargetPrediction.outcome);
       await fetchBoostStats();
       onRefreshPrediction?.();
       setShowStakeModal(false);
@@ -1357,7 +1402,7 @@ const BoostMatchView = ({
     return result;
   };
   const resolvedOutcome = getDisplayResult();
-  const canModify = !locked && !isResolved && (item.status === 'upcoming' || item.status === 'active');
+  const canModify = isEventOpenForPlay(item) && !isResolved;
 
   const handleClaimPrediction = async (prediction) => {
     try {
@@ -2166,7 +2211,7 @@ function fingerprintBooksPair(pair) {
   return `${fingerprintSideBook(pair.YES)}#${fingerprintSideBook(pair.NO)}`;
 }
 
-const MARKET_LIVE_POLL_MS = 8000;
+const MARKET_LIVE_POLL_MS = 15000;
 const MARKET_CHART_MIN_MS = 2000;
 
 const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locked = false, onItemUpdate, ensureLinkedWallet }) => {
@@ -2194,6 +2239,8 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
   const cloneChartPoint = useCallback((p) => ({ ...p }), []);
   const positionsEverLoadedRef = useRef(false);
   const ordersEverLoadedRef = useRef(false);
+  const commentsFetchGenRef = useRef(0);
+  const commentsEverLoadedRef = useRef(false);
   const tradingPanelFetchGenRef = useRef(0);
   const [predictions, setPredictions] = useState({}); // Map of outcome -> prediction
   const [orderbookPositions, setOrderbookPositions] = useState([]);
@@ -2214,8 +2261,8 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
   // Computed value for itemData - always use currentItem if available, fallback to item
   const itemData = currentItem || item;
   
-  // Check if resolved
-  const isResolved = itemData.isResolved || itemData.status === 'settled' || itemData.status === 'completed';
+  // Check if resolved (admin-settled only — not auto "completed" from schedule)
+  const isResolved = itemData.isResolved || itemData.status === 'settled' || itemData.status === 'ended';
   // Map result to display name: TeamA -> teamA name, TeamB -> teamB name, Draw -> Draw
   const getDisplayResult = () => {
     if (!itemData.result) return '';
@@ -2569,6 +2616,10 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     [showNotification, bumpVaultRefresh, fetchMyOrders]
   );
 
+  useEffect(() => {
+    commentsEverLoadedRef.current = false;
+  }, [item?._id]);
+
   const closeOrderbookPosition = useCallback(
     async (positionKey, shares) => {
       if (!user) {
@@ -2591,7 +2642,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       setClosingPositionKey(String(positionKey || ''));
       try {
         const addr = await ensureLinkedWallet();
-        const { data: order } = await api.post('/orderbook/orders', {
+        const orderPromise = api.post('/orderbook/orders', {
           walletAddress: addr,
           matchId: !isPoll ? String(itemData._id) : undefined,
           pollId: isPoll ? String(itemData._id) : undefined,
@@ -2602,6 +2653,24 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
           size: sz,
           slippageBps: 150,
         });
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('CLOSE_TIMEOUT')), 30000);
+        });
+        let order;
+        try {
+          ({ data: order } = await Promise.race([orderPromise, timeoutPromise]));
+        } catch (raceErr) {
+          if (String(raceErr?.message || '') === 'CLOSE_TIMEOUT') {
+            showNotification('Close order sent — refreshing positions…', 'info');
+            bumpVaultRefresh();
+            await Promise.all([
+              fetchOrderbookPositions({ force: true }),
+              fetchMyOrders({ force: true }),
+            ]);
+            return;
+          }
+          throw raceErr;
+        }
         const filled = Number(order?.sizeFilled) || 0;
         const remaining = Number(order?.sizeRemaining) || 0;
         const status = String(order?.status || '').toLowerCase();
@@ -2722,9 +2791,13 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     return rows;
   }, [orderbookPositions, bookMidPrice, outcomeRows]);
 
-  // Update currentItem when item prop changes
+  // Sync market stats from parent without resetting local state on every poll tick
   useEffect(() => {
-    setCurrentItem(item);
+    if (!item?._id) return;
+    setCurrentItem((prev) => {
+      if (!prev || String(prev._id) !== String(item._id)) return item;
+      return { ...prev, ...item };
+    });
   }, [item]);
 
   // Legacy AMM liquidity prices — only when no on-chain orderbook market
@@ -3042,7 +3115,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       itemData?.marketId,
       itemData.startingPrices,
       outcomeRows,
-      user,
+      user?._id,
       applyActivityToChart,
       fetchTradingPanel,
     ]
@@ -3072,25 +3145,34 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     };
   }, []);
 
+  const outcomeKeys = useMemo(() => outcomeRows.map((r) => r.key).join(','), [outcomeRows]);
+
+  const commentsItemId = item?._id != null ? String(item._id) : null;
+
   const fetchComments = useCallback(async () => {
+    if (!commentsItemId) return;
+    const gen = ++commentsFetchGenRef.current;
+    const showSpinner = !commentsEverLoadedRef.current;
     try {
-      setCommentsLoading(true);
-      const itemId = (currentItem || item)?._id || item?._id;
-      if (!itemId) return;
+      if (showSpinner) setCommentsLoading(true);
       const res = await api.get('/comments/market', {
-        params: { type: isPoll ? 'poll' : 'match', itemId },
+        params: { type: isPoll ? 'poll' : 'match', itemId: commentsItemId },
       });
+      if (gen !== commentsFetchGenRef.current) return;
       setComments(Array.isArray(res.data?.comments) ? res.data.comments : []);
+      commentsEverLoadedRef.current = true;
     } catch (e) {
-      console.error('Error fetching comments:', e);
+      if (gen === commentsFetchGenRef.current && e?.response?.status !== 429) {
+        console.warn('fetchComments', e?.message || e);
+      }
     } finally {
-      setCommentsLoading(false);
+      if (gen === commentsFetchGenRef.current) setCommentsLoading(false);
     }
-  }, [currentItem, item, isPoll]);
+  }, [commentsItemId, isPoll]);
 
   const fetchUserMarketPrediction = useCallback(async () => {
     const requestUserId = user?._id != null ? String(user._id) : null;
-    const itemId = (currentItem || item)?._id || item?._id;
+    const itemId = commentsItemId;
     if (!requestUserId || !itemId) {
       setPredictions({});
       return;
@@ -3115,7 +3197,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     } catch (error) {
       setPredictions({});
     }
-  }, [currentItem, item, isPoll, user?._id]);
+  }, [commentsItemId, isPoll, user?._id]);
 
   useEffect(() => {
     if (itemData?.marketId) return undefined;
@@ -3133,7 +3215,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     return () => {
       if (predInterval) clearInterval(predInterval);
     };
-  }, [itemData?.marketId, user, fetchUserMarketPrediction]);
+  }, [itemData?.marketId, user?._id, fetchUserMarketPrediction]);
 
   useEffect(() => {
     if (!itemData?.marketId) return undefined;
@@ -3141,7 +3223,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
     refreshMarketLiveData({ force: true });
     const id = setInterval(() => refreshMarketLiveData(), MARKET_LIVE_POLL_MS);
     return () => clearInterval(id);
-  }, [itemData?.marketId, outcomeRows, refreshMarketLiveData]);
+  }, [itemData?.marketId, outcomeKeys, refreshMarketLiveData]);
 
   useEffect(() => {
     fetchComments();
@@ -3211,8 +3293,8 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       return;
     }
 
-    // Check if locked
-    if (locked || itemData.status === 'locked' || (itemData.lockedTime && new Date() >= new Date(itemData.lockedTime))) {
+    // Check if locked (admin status only)
+    if (locked) {
       showNotification('Trading is locked for this match/poll', 'error');
       return;
     }
@@ -4795,7 +4877,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                     onChangeOptionKey={(k) => setSelectedOption(k)}
                     onChangeSide={(s) => setSelectedSide(s)}
                     hideOutcomeSelector={true}
-                    onOrderPlaced={async (result) => {
+                    onOrderPlaced={(result) => {
                       const order = result?.order || result;
                       const filled = Number(order?.sizeFilled) || 0;
                       const st = String(order?.status || '').toLowerCase();
@@ -4807,20 +4889,22 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                           'success'
                         );
                       }
-                      await Promise.all([
+                      positionsEverLoadedRef.current = false;
+                      Promise.all([
                         fetchTradingPanel({ silent: true, force: true }),
                         refreshMarketLiveData({ force: true }),
-                      ]);
-                      try {
-                        const itemResponse = isPoll
-                          ? await api.get(`/polls/${itemData._id}`)
-                          : await api.get(`/matches/${itemData._id}`);
-                        setCurrentItem(itemResponse.data);
-                        if (onItemUpdate) onItemUpdate(itemResponse.data);
-                      } catch {
-                        /* best-effort pause flag refresh */
-                      }
-                      if (expandedOption) await fetchOptionBooks(expandedOption);
+                      ])
+                        .then(() => {
+                          if (expandedOption) fetchOptionBooks(expandedOption);
+                        })
+                        .catch(() => {});
+                      api
+                        .get(isPoll ? `/polls/${itemData._id}` : `/matches/${itemData._id}`)
+                        .then(({ data }) => {
+                          setCurrentItem(data);
+                          if (onItemUpdate) onItemUpdate(data);
+                        })
+                        .catch(() => {});
                     }}
                   />
 
