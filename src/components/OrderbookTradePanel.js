@@ -55,7 +55,7 @@ function withTimeout(promise, ms, message = 'Request timed out') {
   ]);
 }
 
-const ORDER_POST_TIMEOUT_MS = 30000;
+const ORDER_POST_TIMEOUT_MS = 20000;
 export default function OrderbookTradePanel({
   itemData,
   isPoll,
@@ -529,22 +529,26 @@ export default function OrderbookTradePanel({
       expiresAt: expiresAtIso,
     });
 
-    const finishSuccess = (placed) => {
+    const finishSuccess = (placed, orderKindHint = orderKind) => {
       const filled = Number(placed?.sizeFilled) || 0;
       const remaining = Number(placed?.sizeRemaining) || 0;
       const st = String(placed?.status || '').toLowerCase();
-      if (remaining > 1e-6 && filled > 0) {
+      if (st === 'open' && remaining > 1e-6 && filled <= 1e-9) {
+        showNotification('Limit order placed on the book', 'success');
+      } else if (remaining > 1e-6 && filled > 0) {
         showNotification(
-          `Partially filled ${filled.toFixed(4)} shares (${remaining.toFixed(4)} remaining)`,
-          'warning'
+          `Partial fill — ${filled.toFixed(4)} shares filled, remainder settling…`,
+          'info'
         );
       } else if (st === 'filled' || filled > 0) {
         showNotification(
           filled > 0 ? `Filled ${filled.toFixed(4)} shares` : 'Order filled',
           'success'
         );
+      } else if (orderKindHint === 'market') {
+        showNotification('Order placed — settling…', 'success');
       } else {
-        showNotification('Order placed on the book', 'success');
+        showNotification('Order placed', 'success');
       }
       setSize('');
       setUsdcNotional('');
@@ -590,8 +594,8 @@ export default function OrderbookTradePanel({
         finishSuccess(placed);
       } catch (e) {
         if (String(e?.message || '') === 'ORDER_TIMEOUT') {
-          showNotification('Order sent — refreshing your positions…', 'info');
-          finishSuccess({ sizeFilled: sz, sizeRemaining: 0, status: 'filled' });
+          showNotification('Order sent — check Settling below', 'info');
+          finishSuccess({ status: 'pending', sizeFilled: 0, sizeRemaining: sz }, orderKind);
           return;
         }
         const data = e?.response?.data;
@@ -607,8 +611,8 @@ export default function OrderbookTradePanel({
       }
     } catch (e) {
       if (String(e?.message || '') === 'ORDER_TIMEOUT') {
-        showNotification('Order sent — refreshing your positions…', 'info');
-        finishSuccess({ sizeFilled: sz, sizeRemaining: 0, status: 'filled' });
+        showNotification('Order sent — check Settling below', 'info');
+        finishSuccess({ status: 'pending', sizeFilled: 0, sizeRemaining: sz }, orderKind);
         return;
       }
       showOrderError(e);

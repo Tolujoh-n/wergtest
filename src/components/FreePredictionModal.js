@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import api from '../utils/api';
 import Modal from './Modal';
 import { useWallet } from '../context/WalletContext';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from './Notification';
 import { enrichNftBonusesWithClientHolds } from '../utils/tokenHoldings';
+import { mergeNftBonusRows } from '../utils/mergeNftBonuses';
 import NftHolderBonusesSection from './NftHolderBonusesSection';
 
 function SubmitSpinner() {
@@ -49,6 +50,7 @@ export default function FreePredictionModal({
   const [stake, setStake] = useState(minTickets);
   const [linkingWallet, setLinkingWallet] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const nftLoadedRef = useRef(false);
 
   const walletParams = useCallback(() => {
     if (!account) return {};
@@ -56,7 +58,8 @@ export default function FreePredictionModal({
   }, [account]);
 
   const load = useCallback(async () => {
-    setVerifying(!!account && !!user);
+    const showVerify = !nftLoadedRef.current && !!account && !!user;
+    if (showVerify) setVerifying(true);
     try {
       const { data: pub } = await api.get('/tickets/nft-bonuses', walletParams());
       let list = Array.isArray(pub?.nftBonuses) ? pub.nftBonuses : [];
@@ -78,7 +81,8 @@ export default function FreePredictionModal({
       if (account && list.length) {
         list = await enrichNftBonusesWithClientHolds(list, account);
       }
-      setNftBonuses(list);
+      setNftBonuses((prev) => mergeNftBonusRows(prev, list));
+      nftLoadedRef.current = true;
     } catch {
       setNftBonuses([]);
     } finally {
@@ -90,6 +94,8 @@ export default function FreePredictionModal({
     if (open) {
       setStake(minTickets);
       load();
+    } else {
+      nftLoadedRef.current = false;
     }
   }, [open, minTickets, load]);
 

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { loadFreeTicketData } from '../utils/freeTicketLoad';
+import { mergeNftBonusRows } from '../utils/mergeNftBonuses';
 
 /**
  * Ticket balances + NFT bonus table with stale-while-revalidate (no flicker on wallet refresh).
@@ -32,10 +33,16 @@ export function useFreeTicketData(user, account) {
       keepStale: !isFirstLoad,
       onUpdate: (patch) => {
         if (gen !== loadGenRef.current) return;
-        if (patch.nftBonuses !== undefined) setNftBonuses(patch.nftBonuses);
+        if (patch.nftBonuses !== undefined) {
+          setNftBonuses((prev) => mergeNftBonusRows(prev, patch.nftBonuses));
+        }
         if (patch.balances !== undefined) setBalances(patch.balances);
         if (patch.verifying !== undefined) {
-          setVerifying(patch.verifying);
+          setVerifying((prev) => {
+            if (!patch.verifying) return false;
+            if (loadedRef.current) return false;
+            return true;
+          });
         }
         if (patch.loaded) {
           loadedRef.current = true;

@@ -15,17 +15,15 @@ export default function NftHolderBonusesSection({
 }) {
   const rowStatus = (n) => {
     if (!user) return { key: 'login', label: 'Log in' };
-    if (!account && !n.verifiedOnChain) {
+    if (!account && !n.verifiedOnChain && n.holds !== true && n.holds !== false) {
       return { key: 'connect', label: 'Connect wallet' };
     }
-    // Verified row — show final status (no loading flash)
     if (n.verifiedOnChain || n.holds === true || n.holds === false) {
       if (n.holds) return { key: 'active', label: 'Active' };
       if (n.holdsOnConnectedOnly) return { key: 'link', label: 'Held — link wallet' };
       return { key: 'none', label: 'Not held' };
     }
-    // Still waiting on first on-chain check
-    if (verifying) return { key: 'checking', label: 'Checking…' };
+    if (verifying && account) return { key: 'checking', label: 'Checking…' };
     if (!account) return { key: 'connect', label: 'Connect wallet' };
     return { key: 'pending', label: '—' };
   };
@@ -48,9 +46,6 @@ export default function NftHolderBonusesSection({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           NFT / FT holder bonuses (daily)
-          {verifying && user && (
-            <span className="ml-2 normal-case font-normal text-blue-600 dark:text-blue-400">Updating…</span>
-          )}
         </h3>
         {!account && user && onConnectWallet && (
           <button
@@ -77,13 +72,13 @@ export default function NftHolderBonusesSection({
       )}
       {nftBonuses.length > 0 ? (
         <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-600">
-          <table className={`w-full ${compact ? 'text-xs' : 'text-xs'} min-w-[320px]`}>
+          <table className={`w-full table-fixed ${compact ? 'text-xs' : 'text-xs'} min-w-[320px]`}>
             <thead className="bg-slate-50 dark:bg-slate-800">
               <tr>
-                <th className="text-left p-2.5">Collection</th>
-                <th className="text-right p-2.5">+Tickets/day</th>
-                <th className="text-center p-2.5 hidden sm:table-cell">Type</th>
-                <th className="text-center p-2.5">Status</th>
+                <th className="text-left p-2.5 w-[40%]">Collection</th>
+                <th className="text-right p-2.5 w-[18%]">+Tickets/day</th>
+                <th className="text-center p-2.5 hidden sm:table-cell w-[14%]">Type</th>
+                <th className="text-center p-2.5 w-[22%]">Status</th>
                 <th className="text-right p-2.5" />
               </tr>
             </thead>
@@ -119,9 +114,9 @@ export default function NftHolderBonusesSection({
                     <td className="p-2.5 text-center hidden sm:table-cell text-[10px] uppercase text-slate-500">
                       {n.tokenStandard && n.tokenStandard !== 'auto' ? n.tokenStandard : 'auto'}
                     </td>
-                    <td className="p-2.5 text-center">
+                    <td className="p-2.5 text-center whitespace-nowrap">
                       <span
-                        className={`inline-flex min-w-[4.5rem] justify-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusClass(st.key)}`}
+                        className={`inline-flex min-w-[5rem] max-w-full justify-center px-2 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap ${statusClass(st.key)}`}
                       >
                         {st.label}
                       </span>

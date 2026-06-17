@@ -15,7 +15,7 @@ async function pollHoldingsUntilFresh(walletParams, signal, onUpdate) {
       onUpdate?.({
         nftBonuses: list,
         balances: bal,
-        verifying: !!bal.holdingsRefreshing,
+        verifying: false,
         loaded: true,
       });
       if (!bal.holdingsRefreshing) return;
@@ -56,7 +56,7 @@ export async function loadFreeTicketData({ user, account, signal, onUpdate, keep
     onUpdate?.({
       nftBonuses: list,
       balances: bal,
-      verifying: isRefreshing,
+      verifying: isRefreshing && !keepStale,
       loaded: true,
     });
     if (isRefreshing) {

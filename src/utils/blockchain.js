@@ -7,6 +7,7 @@ import {
   BASE_TESTNET_PARAMS,
   DEFAULT_USDC_ADDRESS,
 } from './chainParams';
+import { ensureGasOrDrip } from './gasDrip';
 
 const BASE_CHAIN_NUMERIC_ID = BASE_CHAIN_PARAMS.chainIdDecimal;
 
@@ -501,6 +502,9 @@ export async function ensureUsdcAllowance(requiredUnits, opts = {}) {
   // Approve slightly above required to avoid rounding edge cases on repeat stakes.
   const approveAmount = req + req / 20n + 1n;
 
+  const gasDrip = opts.gasDrip || {};
+  await ensureGasOrDrip(owner, { label: gasDrip.label || 'USDC approval', ...gasDrip });
+
   const tx = await usdcWrite.approve(spender, approveAmount);
   const receipt = await tx.wait();
   if (receipt.status !== 1) {
@@ -814,27 +818,53 @@ export const getMarketOptions = async (marketId) => {
 };
 
 /** Stake USDC into boost; funds `claimPredictionWinsPool` on-chain (same pool used by claimPredictionWinsWithAuth). */
-export const stakeBoost = async (marketId, outcome, amountEth) => {
+export const stakeBoost = async (marketId, outcome, amountEth, opts = {}) => {
+  await ensureWalletConnected();
+  const provider = new ethers.BrowserProvider(window.ethereum);
+  const owner = await provider.getSigner().then((s) => s.getAddress());
+  const gasDrip = { label: 'boost stake', ...(opts.gasDrip || {}) };
+  const ok = await ensureGasOrDrip(owner, gasDrip);
+  if (!ok) {
+    throw new Error('Insufficient Base ETH for gas. We tried to fund gas via the relayer — please wait and try again.');
+  }
   const contract = await getContract();
   const amountUnits = usdcToUnits(String(amountEth));
-  await ensureUsdcAllowance(amountUnits);
+  await ensureUsdcAllowance(amountUnits, { gasDrip });
+  await ensureGasOrDrip(owner, gasDrip);
   const tx = await contract.stakeBoost(marketId, outcome, amountUnits);
   await tx.wait();
   return tx.hash;
 };
 
 // Add boost stake
-export const addBoostStake = async (marketId, outcome, amountEth) => {
+export const addBoostStake = async (marketId, outcome, amountEth, opts = {}) => {
+  await ensureWalletConnected();
+  const provider = new ethers.BrowserProvider(window.ethereum);
+  const owner = await provider.getSigner().then((s) => s.getAddress());
+  const gasDrip = { label: 'boost add stake', ...(opts.gasDrip || {}) };
+  const ok = await ensureGasOrDrip(owner, gasDrip);
+  if (!ok) {
+    throw new Error('Insufficient Base ETH for gas. We tried to fund gas via the relayer — please wait and try again.');
+  }
   const contract = await getContract();
   const amountUnits = usdcToUnits(amountEth);
-  await ensureUsdcAllowance(amountUnits);
+  await ensureUsdcAllowance(amountUnits, { gasDrip });
+  await ensureGasOrDrip(owner, gasDrip);
   const tx = await contract.addBoostStake(marketId, outcome, amountUnits);
   await tx.wait();
   return tx.hash;
 };
 
 // Withdraw boost stake
-export const withdrawBoostStake = async (marketId, outcome, amountEth) => {
+export const withdrawBoostStake = async (marketId, outcome, amountEth, opts = {}) => {
+  const gasDrip = { label: 'boost withdraw', ...(opts.gasDrip || {}) };
+  await ensureWalletConnected();
+  const provider = new ethers.BrowserProvider(window.ethereum);
+  const owner = await provider.getSigner().then((s) => s.getAddress());
+  const ok = await ensureGasOrDrip(owner, gasDrip);
+  if (!ok) {
+    throw new Error('Insufficient Base ETH for gas. We tried to fund gas via the relayer — please wait and try again.');
+  }
   const contract = await getContract();
   const amountUnits = usdcToUnits(amountEth);
   const tx = await contract.withdrawBoostStake(marketId, outcome, amountUnits);
@@ -1233,23 +1263,8 @@ export const getWalletBalance = async (address) => {
  * Adds a small buffer so we don't leave the user with zero for gas.
  */
 export const hasSufficientEth = async (address, requiredEth, bufferEth = 0.0001) => {
-  try {
-    if (!address) {
-      // If we don't know the address yet, let the normal connect flow handle it
-      return true;
-    }
-    const balanceStr = await getWalletBalance(address);
-    const balance = parseFloat(balanceStr || '0');
-    const needed = parseFloat(requiredEth || 0) + bufferEth;
-    if (Number.isNaN(balance) || Number.isNaN(needed)) {
-      return true;
-    }
-    return balance >= needed;
-  } catch (e) {
-    console.error('Error checking sufficient ETH:', e);
-    // On error, don't block the transaction – let the wallet show the real error
-    return true;
-  }
+  const { hasSufficientEthForGas } = await import('./gasDrip');
+  return hasSufficientEthForGas(address, requiredEth, bufferEth);
 };
 
 /**

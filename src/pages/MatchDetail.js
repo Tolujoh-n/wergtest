@@ -25,7 +25,6 @@ import {
   withdrawBoostStake,
   getUsdcBalance,
   getBlockchainErrorMessage,
-  hasSufficientEth,
   setContractAddress,
 } from '../utils/blockchain';
 import Modal from '../components/Modal';
@@ -36,6 +35,7 @@ import { useFreeTicketData } from '../hooks/useFreeTicketData';
 import TicketBalanceCards from '../components/TicketBalanceCards';
 import WalletInUseModal from '../components/WalletInUseModal';
 import OrderbookTradePanel from '../components/OrderbookTradePanel';
+import { ensureGasOrDrip } from '../utils/gasDrip';
 import { formatUsdAmount } from '../utils/money';
 import { formatMarketOrderbookOutcomeLabel } from '../utils/marketLabels';
 import {
@@ -87,51 +87,6 @@ async function assertWalletUsdcForBoost(walletAddress, amountUsdc, showNotificat
     }
     return true;
   } catch {
-    return true;
-  }
-}
-
-async function ensureGasOrDrip(walletAddress, { label, showNotification } = {}) {
-  if (!walletAddress) return true;
-  try {
-    const enoughGasNow = await hasSufficientEth(walletAddress, 0);
-    if (enoughGasNow) return true;
-
-    // Request drip
-    try {
-      const { data } = await api.post('/relayer/gasdrip', { walletAddress });
-      if (data?.sent) {
-        showNotification?.('Gas funded for you. Finalizing…', 'success');
-      } else {
-        showNotification?.('Gas balance is sufficient. Continuing…', 'info');
-        return true;
-      }
-    } catch (e) {
-      showNotification?.(
-        e?.response?.data?.message ||
-          `Unable to fund gas${label ? ` for ${label}` : ''}. Please add a little Base ETH.`,
-        'error'
-      );
-      return false;
-    }
-
-    // Wait for balance to update (RPC + chain finality)
-    for (let i = 0; i < 6; i++) {
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => setTimeout(r, 800));
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        const ok = await hasSufficientEth(walletAddress, 0);
-        if (ok) return true;
-      } catch (_) {
-        // ignore
-      }
-    }
-
-    showNotification?.('Gas was funded but has not arrived yet. Please try again in a moment.', 'warning');
-    return false;
-  } catch (_) {
-    // If gas check fails, do not block the user from trying
     return true;
   }
 }
@@ -382,22 +337,30 @@ const MatchDetail = () => {
 
           // Wallet + gas, then on-chain stake (skip slow pre-validation RPC calls).
           let linked;
+          const gasDripOpts = { showNotification, label: 'boost stake' };
           try {
             linked = await ensureLinkedWallet();
-            const ok = await ensureGasOrDrip(linked, { label: 'boost stake' });
+            const ok = await ensureGasOrDrip(linked, gasDripOpts);
             if (!ok) return;
             const walletOk = await assertWalletUsdcForBoost(linked, amountNum, showNotification);
             if (!walletOk) return;
           } catch (e) {
             if (String(e?.message || '') === 'WALLET_IN_USE') return;
-            console.warn('Could not verify wallet before boost stake:', e);
-            linked = account || (await ensureConnected());
-            if (!linked) return;
+            try {
+              linked = await ensureLinkedWallet();
+            } catch {
+              linked = account || (await ensureConnected());
+              if (!linked) return;
+            }
+            const ok = await ensureGasOrDrip(linked, gasDripOpts);
+            if (!ok) return;
           }
 
           try {
             showNotification('Confirm in your wallet…', 'info');
-            const txHash = await stakeBoost(currentItem.marketId, normalizedOutcome, parseFloat(amount));
+            const txHash = await stakeBoost(currentItem.marketId, normalizedOutcome, parseFloat(amount), {
+              gasDrip: gasDripOpts,
+            });
 
             try {
               await api.post('/transactions', {
@@ -513,9 +476,13 @@ const MatchDetail = () => {
       }
       
       let linked;
+      const gasDripOpts = {
+        showNotification,
+        label: action === 'add' ? 'boost add stake' : 'boost withdraw',
+      };
       try {
         linked = await ensureLinkedWallet();
-        const ok = await ensureGasOrDrip(linked, { label: action === 'add' ? 'boost add' : 'boost withdraw' });
+        const ok = await ensureGasOrDrip(linked, gasDripOpts);
         if (!ok) return;
         if (action === 'add') {
           const walletOk = await assertWalletUsdcForBoost(linked, parseFloat(amount), showNotification);
@@ -528,10 +495,14 @@ const MatchDetail = () => {
 
       if (action === 'add') {
         showNotification('Confirm in your wallet…', 'info');
-        txHash = await addBoostStake(item.marketId, normalizedOutcome, parseFloat(amount));
+        txHash = await addBoostStake(item.marketId, normalizedOutcome, parseFloat(amount), {
+          gasDrip: gasDripOpts,
+        });
       } else if (action === 'withdraw') {
         showNotification('Confirm in your wallet…', 'info');
-        txHash = await withdrawBoostStake(item.marketId, normalizedOutcome, parseFloat(amount));
+        txHash = await withdrawBoostStake(item.marketId, normalizedOutcome, parseFloat(amount), {
+          gasDrip: gasDripOpts,
+        });
       }
 
       if (txHash) {
@@ -1419,7 +1390,7 @@ const BoostMatchView = ({
         walletAddress,
       });
 
-      const okGas = await ensureGasOrDrip(walletAddress, { label: 'claim' });
+      const okGas = await ensureGasOrDrip(walletAddress, { label: 'claim', showNotification });
       if (!okGas) return;
 
       const txHash =
@@ -2444,6 +2415,14 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
   }, [fetchTradingPanel]);
 
   useEffect(() => {
+    if (!user?._id || settlingOrders.length === 0) return undefined;
+    const id = setInterval(() => {
+      fetchTradingPanel({ silent: true, force: true });
+    }, 4000);
+    return () => clearInterval(id);
+  }, [user?._id, settlingOrders.length, fetchTradingPanel]);
+
+  useEffect(() => {
     clearTradingPanelState();
   }, [user?._id, itemData?.marketId, clearTradingPanelState]);
 
@@ -2660,15 +2639,13 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
         try {
           ({ data: order } = await Promise.race([orderPromise, timeoutPromise]));
         } catch (raceErr) {
-          if (String(raceErr?.message || '') === 'CLOSE_TIMEOUT') {
-            showNotification('Close order sent — refreshing positions…', 'info');
-            bumpVaultRefresh();
-            await Promise.all([
-              fetchOrderbookPositions({ force: true }),
-              fetchMyOrders({ force: true }),
-            ]);
-            return;
-          }
+        if (String(raceErr?.message || '') === 'CLOSE_TIMEOUT') {
+          showNotification('Close order sent — settling…', 'info');
+          bumpVaultRefresh();
+          fetchOrderbookPositions({ force: true });
+          fetchMyOrders({ force: true });
+          return;
+        }
           throw raceErr;
         }
         const filled = Number(order?.sizeFilled) || 0;
@@ -3355,7 +3332,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
         let linked;
         try {
           linked = await ensureLinkedWallet();
-          const ok = await ensureGasOrDrip(linked, { label: 'market buy' });
+          const ok = await ensureGasOrDrip(linked, { label: 'market buy', showNotification });
           if (!ok) return;
         } catch (e) {
           if (String(e?.message || '') === 'WALLET_IN_USE') return;
@@ -3502,7 +3479,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
           // Gas-drip before sell if user has no Base ETH for gas.
           try {
             const linked = await ensureLinkedWallet();
-            const ok = await ensureGasOrDrip(linked, { label: 'market sell' });
+            const ok = await ensureGasOrDrip(linked, { label: 'market sell', showNotification });
             if (!ok) return;
           } catch (e) {
             if (String(e?.message || '') === 'WALLET_IN_USE') return;
@@ -4785,7 +4762,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                                   });
 
                                   // Gas-drip before claim if user has no Base ETH for gas.
-                                  const okGas = await ensureGasOrDrip(linked, { label: 'claim' });
+                                  const okGas = await ensureGasOrDrip(linked, { label: 'claim', showNotification });
                                   if (!okGas) return;
 
                                   const txHash =
@@ -4878,26 +4855,20 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                     onChangeSide={(s) => setSelectedSide(s)}
                     hideOutcomeSelector={true}
                     onOrderPlaced={(result) => {
+                      fetchTradingPanel({ silent: true, force: true });
+                      refreshMarketLiveData({ force: true }).catch(() => {});
                       const order = result?.order || result;
                       const filled = Number(order?.sizeFilled) || 0;
                       const st = String(order?.status || '').toLowerCase();
                       if (st === 'filled' || filled > 0) {
                         showNotification(
                           filled > 0
-                            ? `Trade executed: ${filled.toFixed(4)} shares filled — see Positions`
-                            : 'Order filled — see Positions',
+                            ? `Trade executed: ${filled.toFixed(4)} shares filled`
+                            : 'Order filled',
                           'success'
                         );
                       }
-                      positionsEverLoadedRef.current = false;
-                      Promise.all([
-                        fetchTradingPanel({ silent: true, force: true }),
-                        refreshMarketLiveData({ force: true }),
-                      ])
-                        .then(() => {
-                          if (expandedOption) fetchOptionBooks(expandedOption);
-                        })
-                        .catch(() => {});
+                      if (expandedOption) fetchOptionBooks(expandedOption);
                       api
                         .get(isPoll ? `/polls/${itemData._id}` : `/matches/${itemData._id}`)
                         .then(({ data }) => {
@@ -4907,6 +4878,60 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                         .catch(() => {});
                     }}
                   />
+
+                  {user && (
+                    <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+                      <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Your holdings</h3>
+                      {orderbookPositionsLoading && !positionsEverLoadedRef.current ? (
+                        <p className="text-gray-500 dark:text-gray-400 text-sm">Loading holdings…</p>
+                      ) : holdingsWithShares.length === 0 ? (
+                        <p className="text-gray-500 dark:text-gray-400 text-sm">
+                          No positions yet — filled trades appear here after settling.
+                        </p>
+                      ) : (
+                        <div className="space-y-3 text-sm">
+                          {holdingsWithShares.map((row) => {
+                            const yesShares = row.YES?.shares || 0;
+                            const noShares = row.NO?.shares || 0;
+                            return (
+                              <div
+                                key={row.optionKey}
+                                className="pb-2 border-b border-gray-100 dark:border-gray-700 last:border-0"
+                              >
+                                <div className="text-sm font-semibold text-gray-900 dark:text-white truncate mb-1">
+                                  {row.label}
+                                </div>
+                                <div className="flex justify-between text-gray-600 dark:text-gray-300">
+                                  <span>YES</span>
+                                  <span className="tabular-nums font-medium">
+                                    {yesShares > 1e-9 ? Number(yesShares).toFixed(4) : '—'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between text-gray-600 dark:text-gray-300">
+                                  <span>NO</span>
+                                  <span className="tabular-nums font-medium">
+                                    {noShares > 1e-9 ? Number(noShares).toFixed(4) : '—'}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                          <div className="flex justify-between pt-2 border-t border-gray-200 dark:border-gray-700">
+                            <span className="text-gray-500 dark:text-gray-400">Total value</span>
+                            <span className="font-semibold tabular-nums">
+                              {formatUsdAmount(orderbookHoldingsTotal)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                      {!isResolved && settlingOrders.length > 0 && (
+                        <p className="text-xs text-blue-600 dark:text-blue-400 mt-3">
+                          {settlingOrders.length} order{settlingOrders.length === 1 ? '' : 's'} settling — see table
+                          below.
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                   {false && (
                     <>
