@@ -4,6 +4,8 @@ import { useNotification } from '../components/Notification';
 import Modal from '../components/Modal';
 import api from '../utils/api';
 import { formatUsdAmount } from '../utils/money';
+import { EM_DASH } from '../utils/textGlyphs';
+import { LoadingLabel } from '../components/UiIcons';
 import {
   getWalletBalance,
   getUsdcBalance,
@@ -411,7 +413,7 @@ export default function WalletPage() {
                     disabled={vaultBusy}
                     className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
                   >
-                    {vaultBusy ? 'ProcessingΓÇª' : 'Deposit to vault'}
+                    {vaultBusy ? <LoadingLabel text="Processing" /> : 'Deposit to vault'}
                   </button>
                   <button
                     type="button"
@@ -419,7 +421,7 @@ export default function WalletPage() {
                     disabled={vaultBusy}
                     className="w-full px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50"
                   >
-                    {vaultBusy ? 'ProcessingΓÇª' : 'Withdraw all'}
+                    {vaultBusy ? <LoadingLabel text="Processing" /> : 'Withdraw all'}
                   </button>
                 </div>
               </div>
@@ -446,7 +448,9 @@ export default function WalletPage() {
               Connect your wallet to see your transaction history.
             </div>
           ) : txLoading ? (
-            <div className="py-8 text-center text-gray-500 dark:text-gray-400">LoadingΓÇª</div>
+            <div className="py-8 text-center text-gray-500 dark:text-gray-400">
+              <LoadingLabel text="Loading" className="justify-center" />
+            </div>
           ) : (
             <>
               <div className="overflow-x-auto">
@@ -463,7 +467,7 @@ export default function WalletPage() {
                     {txRows.map((row) => (
                       <tr key={row._id}>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600 dark:text-gray-300">
-                          {row.createdAt ? new Date(row.createdAt).toLocaleString() : 'ΓÇö'}
+                          {row.createdAt ? new Date(row.createdAt).toLocaleString() : '—'}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">
                           {row.action}
@@ -473,7 +477,7 @@ export default function WalletPage() {
                             ? row.currency === 'ETH'
                               ? `${Number(row.amount).toFixed(6)} ETH`
                               : formatUsdAmount(row.amount)
-                            : 'ΓÇö'}
+                            : '—'}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-blue-600 dark:text-blue-400">
                           {row.txHash ? (
@@ -487,7 +491,7 @@ export default function WalletPage() {
                               {`${String(row.txHash).slice(0, 10)}...`}
                             </a>
                           ) : (
-                            'ΓÇö'
+                            '—'
                           )}
                         </td>
                       </tr>
@@ -543,7 +547,7 @@ export default function WalletPage() {
               Send <strong>Base ETH</strong> (for gas) or <strong>USDC</strong> to this address:
             </p>
             <div className="p-3 rounded-lg bg-gray-100 dark:bg-gray-700 font-mono text-sm break-all text-gray-900 dark:text-white">
-              {account || 'ΓÇö'}
+              {account || '—'}
             </div>
             <button
               type="button"
@@ -608,7 +612,7 @@ export default function WalletPage() {
               disabled={sending}
               className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
             >
-              {sending ? 'SendingΓÇª' : 'Send'}
+              {sending ? <LoadingLabel text="Sending" /> : 'Send'}
             </button>
           </div>
         </Modal>
