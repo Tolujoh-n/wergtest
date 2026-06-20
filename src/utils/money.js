@@ -9,3 +9,8 @@ export function formatUsdAmount(amount, { maximumFractionDigits = 4 } = {}) {
   }).format(n);
 }
 
+/** Jackpot / pool display — always 2 decimal places, full figure visible via tabular-nums + title. */
+export function formatJackpotUsd(amount) {
+  return formatUsdAmount(amount, { maximumFractionDigits: 2 });
+}
+

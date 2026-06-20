@@ -36,13 +36,20 @@ import TicketBalanceCards from '../components/TicketBalanceCards';
 import WalletInUseModal from '../components/WalletInUseModal';
 import OrderbookTradePanel from '../components/OrderbookTradePanel';
 import { ensureGasOrDrip } from '../utils/gasDrip';
-import { formatUsdAmount } from '../utils/money';
+import { formatUsdAmount, formatJackpotUsd } from '../utils/money';
+import JackpotPoolsBanner, { jackpotPoolsFromItem } from '../components/JackpotPoolsBanner';
+import {
+  goldenTicketsForBoostStake,
+  normalizeGoldenTicketBoostRate,
+  formatGoldenTicketRateLabel,
+  DEFAULT_GOLDEN_TICKET_BOOST_RATE,
+} from '../utils/goldenTickets';
+import { StarIcon } from '../components/UiIcons';
 import { formatMarketOrderbookOutcomeLabel } from '../utils/marketLabels';
 import {
   boostOutcomeStatsKey,
   estimateBoostPotentialWin,
   estimateFreeJackpotPotentialWin,
-  estimateMarketOrderbookPotentialWin,
 } from '../utils/predictionPayout';
 import { isEventOpenForPlay } from '../utils/eventOpen';
 
@@ -971,15 +978,11 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
             </>
           )}
 
-          <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 border border-green-200 dark:border-green-800 mb-6">
-            <div className="text-sm text-green-600 dark:text-green-400 font-semibold mb-1">Jackpot pool</div>
-            <div className="text-xl font-bold text-green-700 dark:text-green-300">
-              {formatUsdAmount(effectiveFreeJackpotPool)}
-            </div>
-            <p className="text-xs text-green-700/80 dark:text-green-300/80 mt-1">
-              Split among winning free picks by tickets staked on that outcome.
-            </p>
-          </div>
+          <JackpotPoolsBanner
+            freeJackpot={effectiveFreeJackpotPool}
+            boostJackpot={jackpotPoolsFromItem(item).boostJackpot}
+            className="mb-6"
+          />
 
           {isResolved && (
             <div className="bg-blue-50 dark:bg-blue-900 rounded-lg p-6 mb-6">
@@ -1184,7 +1187,7 @@ const BoostMatchView = ({
   const [stakeTargetPrediction, setStakeTargetPrediction] = useState(null);
   const [stakeAmount, setStakeAmount] = useState('');
   const [fees, setFees] = useState({ platformFee: 10, boostJackpotFee: 5 });
-  const [goldenRanges, setGoldenRanges] = useState([]);
+  const [goldenTicketRate, setGoldenTicketRate] = useState(DEFAULT_GOLDEN_TICKET_BOOST_RATE);
   const [boostStats, setBoostStats] = useState(null);
   const [boostBusy, setBoostBusy] = useState(false);
   const { showNotification } = useNotification();
@@ -1202,8 +1205,8 @@ const BoostMatchView = ({
         : `/predictions/match/${itemId}/boost-stats`;
       const { data } = await api.get(path);
       setBoostStats(data);
-      if (Array.isArray(data?.goldenTicketBoostRanges)) {
-        setGoldenRanges(data.goldenTicketBoostRanges);
+      if (data?.goldenTicketBoostRate) {
+        setGoldenTicketRate(normalizeGoldenTicketBoostRate(data.goldenTicketBoostRate));
       }
     } catch (error) {
       console.warn('boost-stats', error?.message || error);
@@ -1218,7 +1221,12 @@ const BoostMatchView = ({
           api.get('/tickets/balances'),
         ]);
         setFees(feesRes.data || { platformFee: 10, boostJackpotFee: 5 });
-        setGoldenRanges(balRes.data?.goldenTicketBoostRanges || []);
+        const rate =
+          balRes.data?.goldenTicketBoostRate ||
+          (Array.isArray(balRes.data?.goldenTicketBoostRanges) && balRes.data.goldenTicketBoostRanges.length
+            ? null
+            : DEFAULT_GOLDEN_TICKET_BOOST_RATE);
+        if (rate) setGoldenTicketRate(normalizeGoldenTicketBoostRate(rate));
       } catch (error) {
         console.error('Error loading boost helpers:', error);
       }
@@ -1270,23 +1278,7 @@ const BoostMatchView = ({
     }
   };
 
-  const goldenTicketsForStake = (stakeUsdc) => {
-    const amt = Number(stakeUsdc) || 0;
-    if (amt <= 0 || !goldenRanges.length) return 0;
-    for (const r of goldenRanges) {
-      const min = Number(r.minUsdc) || 0;
-      const maxRaw = r.maxUsdc;
-      const max =
-        maxRaw == null || maxRaw === ''
-          ? Infinity
-          : Number.isFinite(Number(maxRaw))
-            ? Number(maxRaw)
-            : Infinity;
-      const tickets = parseInt(r.tickets, 10) || 0;
-      if (amt >= min && amt <= max) return tickets;
-    }
-    return 0;
-  };
+  const goldenTicketsForStake = (stakeUsdc) => goldenTicketsForBoostStake(stakeUsdc, goldenTicketRate);
 
   const effectiveBoostPool =
     item.isResolved && (item.originalBoostPool ?? 0) > 0
@@ -1566,19 +1558,15 @@ const BoostMatchView = ({
             </>
           )}
 
-          <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 border border-green-200 dark:border-green-800 mb-6">
-            <div className="text-sm text-green-600 dark:text-green-400 font-semibold mb-1">Jackpot pool</div>
-            <div className="text-xl font-bold text-green-700 dark:text-green-300">
-              {formatUsdAmount(
-                item.isResolved && item.originalFreeJackpotPool
-                  ? item.originalFreeJackpotPool
-                  : item.freeJackpotPool || 0
-              )}
-            </div>
-            <p className="text-xs text-green-700/80 dark:text-green-300/80 mt-1">
-              Boost pool (this match): {formatUsdAmount(effectiveBoostPool)}
-            </p>
-          </div>
+          <JackpotPoolsBanner
+            freeJackpot={
+              item.isResolved && item.originalFreeJackpotPool
+                ? item.originalFreeJackpotPool
+                : item.freeJackpotPool || 0
+            }
+            boostJackpot={effectiveBoostPool}
+            className="mb-6"
+          />
 
           {isResolved && (
             <div className="bg-blue-50 dark:bg-blue-900 rounded-lg p-6 mb-6">
@@ -1596,29 +1584,22 @@ const BoostMatchView = ({
               BOOST Prize Pool Contest
             </h2>
             <p className="text-gray-600 dark:text-gray-400 mb-2">
-              Stake USDC to enter the prize pool. Winners split the pool proportionally.
+              Stake USDC to enter the prize pool. Winners split the boost jackpot proportionally.
             </p>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {platformFeePct}% platform fee • {jackpotFeePct}% to free jackpot pool • Game locks at kickoff
-            </p>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Prize pool: {formatUsdAmount(effectiveBoostPool)}
-              {(boostStats?.adminTopUp ?? 0) > 0.001 && (
-                <span> (includes {formatUsdAmount(boostStats.adminTopUp)} sponsor top-up)</span>
-              )}
-            </p>
-            {goldenRanges.length > 0 && (
-              <div className="mt-3 text-xs text-amber-800 dark:text-amber-200 bg-amber-50/80 dark:bg-amber-950/40 rounded-lg p-3 border border-amber-200/60 dark:border-amber-800">
-                <div className="font-semibold mb-1">Golden ticket ranges (per stake)</div>
-                <ul className="space-y-0.5">
-                  {goldenRanges.map((r, i) => (
-                    <li key={i} className="tabular-nums">
-                      {formatUsdAmount(r.minUsdc)} – {r.maxUsdc != null ? formatUsdAmount(r.maxUsdc) : '∞'} → +{r.tickets || 0} ⭐
-                    </li>
-                  ))}
-                </ul>
-              </div>
+            {(boostStats?.adminTopUp ?? 0) > 0.001 && (
+              <p className="text-xs text-purple-700/90 dark:text-purple-300/90">
+                Includes {formatJackpotUsd(boostStats.adminTopUp)} sponsor top-up in the boost jackpot.
+              </p>
             )}
+            <div className="mt-4 rounded-lg border border-amber-200/70 dark:border-amber-800/60 bg-amber-50/80 dark:bg-amber-950/30 px-4 py-3">
+              <p className="text-sm font-semibold text-amber-900 dark:text-amber-100 mb-1">
+                Golden tickets on boost
+              </p>
+              <p className="text-xs text-amber-800/90 dark:text-amber-200/90 leading-relaxed">
+                {formatGoldenTicketRateLabel(goldenTicketRate)}. Tickets are rounded to the nearest whole
+                number and added to your golden ticket balance after each boost or add-stake.
+              </p>
+            </div>
           </div>
 
           <div className="rounded-lg border border-gray-200 dark:border-gray-700 mb-6 overflow-hidden bg-white dark:bg-gray-800">
@@ -1869,7 +1850,7 @@ const BoostMatchView = ({
 
                             <span className="font-semibold text-emerald-700 dark:text-emerald-300">
 
-                              {formatUsdAmount(potWin)}
+                              {formatJackpotUsd(potWin)}
 
                             </span>
 
@@ -2025,28 +2006,31 @@ const BoostMatchView = ({
                     />
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{formatUsdAmount(amount || 0)}</p>
                     {amount && parseFloat(amount) > 0 && (
-                      <div className="mt-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-800 text-xs space-y-1">
-                        <p className="text-gray-700 dark:text-gray-300">
-                          Net stake after fees: <strong>{formatUsdAmount(estimateNetStake(amount))}</strong>
-                        </p>
+                      <div className="mt-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-800 text-xs space-y-1.5">
                         <p className="text-emerald-800 dark:text-emerald-200 font-semibold text-sm">
                           Potential win if correct:{' '}
-                          <strong>{formatUsdAmount(boostPotentialWin(amount, 0, selectedOutcome) || 0)}</strong>
+                          <strong>{formatJackpotUsd(boostPotentialWin(amount, 0, selectedOutcome) || 0)}</strong>
                         </p>
-                        <p className="text-amber-800 dark:text-amber-200">
-                          Golden tickets earned: <strong>+{goldenTicketsForStake(amount)} ⭐</strong>
+                        <p className="text-amber-900 dark:text-amber-100 flex items-center gap-1.5">
+                          <StarIcon className="w-4 h-4 text-amber-500 shrink-0" />
+                          <span>
+                            Golden tickets: <strong>+{goldenTicketsForStake(amount)}</strong>
+                          </span>
                         </p>
-                        <p className="text-gray-500 dark:text-gray-500">
-                          Fees on stake: {platformFeePct}% platform • {jackpotFeePct}% free jackpot
+                        <p className="text-gray-500 dark:text-gray-400 text-[11px]">
+                          {formatGoldenTicketRateLabel(goldenTicketRate)} (rounded to nearest whole ticket).
                         </p>
                       </div>
                     )}
                   </div>
                 )}
+                {/* Fees notice hidden from users — platformFeePct / jackpotFeePct still apply on-chain */}
+                {/*
                 <div className="text-sm text-gray-600 dark:text-gray-400">
                   <p>{platformFeePct}% platform fee • {jackpotFeePct}% to free jackpot pool</p>
                   <p>Fees apply on every boost and add-stake</p>
                 </div>
+                */}
                 <div className="flex space-x-2">
                   <button
                     type="button"
@@ -2109,14 +2093,24 @@ const BoostMatchView = ({
                     required
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {formatUsdAmount(stakeAmount || 0)}
+                    {formatJackpotUsd(stakeAmount || 0)}
                     {stakeAmount && goldenTicketsForStake(stakeAmount) > 0 ? (
-                      <> · Golden tickets: +{goldenTicketsForStake(stakeAmount)} ⭐</>
+                      <span className="inline-flex items-center gap-1 ml-1 text-amber-700 dark:text-amber-300">
+                        · +{goldenTicketsForStake(stakeAmount)} golden ticket
+                        {goldenTicketsForStake(stakeAmount) === 1 ? '' : 's'}
+                      </span>
                     ) : null}
                   </p>
                   {stakeAmount && parseFloat(stakeAmount) > 0 && (
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                      Fees: {platformFeePct}% platform • {jackpotFeePct}% free jackpot
+                    <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-2 font-medium">
+                      Potential win if correct:{' '}
+                      {formatJackpotUsd(
+                        boostPotentialWin(
+                          stakeAmount,
+                          Number(stakeTargetPrediction.totalStake || stakeTargetPrediction.amount || 0),
+                          stakeTargetPrediction.outcome
+                        ) || 0
+                      )}
                     </p>
                   )}
                 </div>
@@ -2738,21 +2732,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
       const avg = invested > 0 && shares > 0 ? invested / shares : null;
       const cur = bookMidPrice(optionKey, side);
       const pnl = cur != null && avg != null ? (cur - avg) * shares : null;
-      const potentialWin =
-        shares > 1e-9
-          ? Math.max(
-              0,
-              invested > 0
-                ? shares - invested
-                : avg != null
-                  ? estimateMarketOrderbookPotentialWin({
-                      direction: 'buy',
-                      shares,
-                      price: avg,
-                    }) ?? 0
-                  : 0
-            )
-          : 0;
+      const potentialWin = shares > 1e-9 ? shares : 0;
       rows.push({
         positionKey: pk,
         optionKey,
@@ -3736,16 +3716,15 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
               </p>
             </div>
           )}
-          <div className="mt-4 bg-green-50 dark:bg-green-900/20 rounded-lg p-4 border border-green-200 dark:border-green-800">
-            <div className="text-sm text-green-600 dark:text-green-400 font-semibold mb-1">Jackpot pool</div>
-            <div className="text-xl font-bold text-green-700 dark:text-green-300">
-              {formatUsdAmount(
-                itemData.isResolved && itemData.originalFreeJackpotPool
-                  ? itemData.originalFreeJackpotPool
-                  : itemData.freeJackpotPool || 0
-              )}
-            </div>
-          </div>
+          <JackpotPoolsBanner
+            freeJackpot={
+              itemData.isResolved && itemData.originalFreeJackpotPool
+                ? itemData.originalFreeJackpotPool
+                : itemData.freeJackpotPool || 0
+            }
+            boostJackpot={jackpotPoolsFromItem(itemData).boostJackpot}
+            className="mt-4"
+          />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">

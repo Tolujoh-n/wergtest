@@ -27,9 +27,8 @@ export function estimateMarketOrderbookPotentialWin({
   if (!(sz > 0) || !Number.isFinite(px) || px <= 0) return null;
   const fr = Number.isFinite(feeRate) && feeRate >= 0 ? feeRate : 0;
   if (direction === 'buy') {
-    const cost = sz * px * (1 + fr);
-    const payoutIfWin = sz;
-    return Math.max(0, payoutIfWin - cost);
+    // Each share pays $1 if the outcome wins — total payout includes stake + profit.
+    return Math.max(0, sz);
   }
   const proceeds = sz * px * (1 - fr);
   return Math.max(0, proceeds);
@@ -76,5 +75,7 @@ export function estimateBoostPotentialWin({
     userStake
   );
   if (userStake <= 0 || pool <= 0 || outcomeTotal <= 0) return null;
-  return pool * (userStake / outcomeTotal);
+  const poolShare = pool * (userStake / outcomeTotal);
+  const stakeForDisplay = existing + (Number(grossStakeUsdc) || 0);
+  return stakeForDisplay + poolShare;
 }

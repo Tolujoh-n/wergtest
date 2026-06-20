@@ -3724,8 +3724,6 @@ const emptyNftBonus = () => ({
   tokenId: '',
 });
 
-const emptyGoldenRange = () => ({ minUsdc: 0, maxUsdc: 100, tickets: 1 });
-
 const GOLDEN_TICKET_PRESETS = ['1', '2', '3', '4', '5'];
 const GOLDEN_DAY_PRESETS = ['1', '3', '7', '30'];
 
@@ -3960,9 +3958,8 @@ const SettingsTab = () => {
   const [dailyFreeTickets, setDailyFreeTickets] = useState(1);
   const [pointsPerWin, setPointsPerWin] = useState(10);
   const [nftBonuses, setNftBonuses] = useState([]);
-  const [goldenRanges, setGoldenRanges] = useState([]);
+  const [goldenTicketRate, setGoldenTicketRate] = useState({ tickets: 1, perUsdc: 10 });
   const [nftEditor, setNftEditor] = useState(null);
-  const [goldenEditor, setGoldenEditor] = useState(null);
   const [giftIdentifier, setGiftIdentifier] = useState('');
   const [giftQuantityPreset, setGiftQuantityPreset] = useState('1');
   const [giftQuantityCustom, setGiftQuantityCustom] = useState('');
@@ -4026,20 +4023,20 @@ const SettingsTab = () => {
       setNftBonuses([]);
     }
     try {
-      const [rangesRes, grantsRes] = await Promise.all([
-        api.get('/admin/settings/goldenTicketBoostRanges'),
+      const [rateRes, grantsRes] = await Promise.all([
+        api.get('/admin/settings/goldenTicketBoostRate'),
         api.get('/admin/users/golden-ticket-daily-grants').catch(() => ({ data: { grants: [] } })),
       ]);
       setActiveDailyGrants(grantsRes.data?.grants || []);
-      const ranges = Array.isArray(rangesRes.data?.ranges)
-        ? rangesRes.data.ranges
-        : Array.isArray(rangesRes.data?.value)
-          ? rangesRes.data.value
-          : [];
-      setGoldenRanges(ranges);
+      const rate = rateRes.data?.rate;
+      if (rate && Number(rate.perUsdc) > 0) {
+        setGoldenTicketRate({
+          tickets: Math.max(1, parseInt(rate.tickets, 10) || 1),
+          perUsdc: Math.max(0.01, Number(rate.perUsdc) || 10),
+        });
+      }
     } catch (error) {
-      console.error('Error fetching golden ranges:', error);
-      setGoldenRanges([]);
+      console.error('Error fetching golden ticket rate:', error);
     } finally {
       setLoading(false);
     }
@@ -4084,19 +4081,17 @@ const SettingsTab = () => {
     }
   };
 
-  const saveGoldenRanges = async () => {
+  const saveGoldenTicketRate = async () => {
     setSavingGolden(true);
     try {
-      const ranges = goldenRanges.map((r) => ({
-        minUsdc: Number(r.minUsdc) || 0,
-        maxUsdc: Number(r.maxUsdc) || 0,
-        tickets: Math.max(0, parseInt(r.tickets, 10) || 0),
-      }));
-      const { data } = await api.post('/admin/settings/goldenTicketBoostRanges', { ranges });
-      setGoldenRanges(Array.isArray(data?.ranges) ? data.ranges : ranges);
-      showNotification('Golden ticket boost ranges saved', 'success');
+      const tickets = Math.max(1, parseInt(goldenTicketRate.tickets, 10) || 1);
+      const perUsdc = Math.max(0.01, Number(goldenTicketRate.perUsdc) || 10);
+      const { data } = await api.post('/admin/settings/goldenTicketBoostRate', { tickets, perUsdc });
+      const rate = data?.rate || { tickets, perUsdc };
+      setGoldenTicketRate(rate);
+      showNotification('Golden ticket boost rate saved', 'success');
     } catch (error) {
-      showNotification(error.response?.data?.message || 'Failed to save golden ranges', 'error');
+      showNotification(error.response?.data?.message || 'Failed to save golden ticket rate', 'error');
     } finally {
       setSavingGolden(false);
     }
@@ -4140,24 +4135,6 @@ const SettingsTab = () => {
       setNftBonuses([...nftBonuses, entry]);
     }
     setNftEditor(null);
-  };
-
-  const applyGoldenEditor = () => {
-    if (!goldenEditor) return;
-    const { _editIndex, ...draft } = goldenEditor;
-    const entry = {
-      minUsdc: Number(draft.minUsdc) || 0,
-      maxUsdc: Number(draft.maxUsdc) || 0,
-      tickets: Math.max(0, parseInt(draft.tickets, 10) || 0),
-    };
-    if (_editIndex >= 0) {
-      const next = [...goldenRanges];
-      next[_editIndex] = entry;
-      setGoldenRanges(next);
-    } else {
-      setGoldenRanges([...goldenRanges, entry]);
-    }
-    setGoldenEditor(null);
   };
 
   const giftGoldenTickets = async () => {
@@ -4478,113 +4455,58 @@ const SettingsTab = () => {
         </div>
 
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Golden ticket boost ranges</h3>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Golden tickets on boost</h3>
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-            Golden tickets earned after a boost prediction, by USDC stake range (shown on boost predict modal).
+            How many golden tickets users earn per USDC staked on boost or add-stake. Amounts are rounded to the
+            nearest whole ticket (e.g. $27 at 1 per $10 → 3 tickets).
           </p>
-          {goldenRanges.length > 0 ? (
-            <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700 mb-4">
-              <table className="w-full text-sm min-w-[480px]">
-                <thead className="bg-gray-50 dark:bg-gray-900/50 text-left text-xs uppercase tracking-wide text-gray-500">
-                  <tr>
-                    <th className="p-3">Min USDC</th>
-                    <th className="p-3">Max USDC</th>
-                    <th className="p-3 text-right">Golden tickets</th>
-                    <th className="p-3 text-right w-24">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {goldenRanges.map((r, i) => (
-                    <tr key={i} className="border-t border-gray-100 dark:border-gray-700">
-                      <td className="p-3 tabular-nums">{r.minUsdc}</td>
-                      <td className="p-3 tabular-nums">{r.maxUsdc}</td>
-                      <td className="p-3 text-right tabular-nums font-semibold text-amber-700 dark:text-amber-300">+{r.tickets ?? 0}</td>
-                      <td className="p-3">
-                        <div className="flex justify-end gap-1">
-                          <button
-                            type="button"
-                            title="Edit"
-                            onClick={() => setGoldenEditor({ ...r, _editIndex: i })}
-                            className="p-2 rounded-lg text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30"
-                          >
-                            <SettingsIconEdit />
-                          </button>
-                          <button
-                            type="button"
-                            title="Delete"
-                            onClick={() => setGoldenRanges(goldenRanges.filter((_, j) => j !== i))}
-                            className="p-2 rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
-                          >
-                            <SettingsIconTrash />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg mb-4">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">
+                Golden tickets
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={goldenTicketRate.tickets ?? 1}
+                onChange={(e) =>
+                  setGoldenTicketRate((r) => ({ ...r, tickets: parseInt(e.target.value, 10) || 1 }))
+                }
+                className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:text-white text-sm"
+              />
             </div>
-          ) : (
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4 italic">No boost ranges configured yet.</p>
-          )}
-          {goldenEditor && (
-            <div className="border rounded-lg p-4 dark:border-gray-700 space-y-3 mb-4 bg-gray-50 dark:bg-gray-900/40">
-              <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                {goldenEditor._editIndex >= 0 ? 'Edit range' : 'Add range'}
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <input
-                  type="number"
-                  step="0.01"
-                  placeholder="Min USDC"
-                  value={goldenEditor.minUsdc ?? ''}
-                  onChange={(e) => setGoldenEditor({ ...goldenEditor, minUsdc: e.target.value })}
-                  className="px-3 py-2 border rounded-lg dark:bg-gray-700 dark:text-white text-sm"
-                />
-                <input
-                  type="number"
-                  step="0.01"
-                  placeholder="Max USDC"
-                  value={goldenEditor.maxUsdc ?? ''}
-                  onChange={(e) => setGoldenEditor({ ...goldenEditor, maxUsdc: e.target.value })}
-                  className="px-3 py-2 border rounded-lg dark:bg-gray-700 dark:text-white text-sm"
-                />
-                <input
-                  type="number"
-                  min="0"
-                  placeholder="Golden tickets"
-                  value={goldenEditor.tickets ?? ''}
-                  onChange={(e) => setGoldenEditor({ ...goldenEditor, tickets: parseInt(e.target.value, 10) || 0 })}
-                  className="px-3 py-2 border rounded-lg dark:bg-gray-700 dark:text-white text-sm"
-                />
-              </div>
-              <div className="flex gap-2">
-                <button type="button" onClick={applyGoldenEditor} className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-semibold">
-                  {goldenEditor._editIndex >= 0 ? 'Update row' : 'Add to list'}
-                </button>
-                <button type="button" onClick={() => setGoldenEditor(null)} className="px-4 py-2 border rounded-lg text-sm dark:border-gray-600">
-                  Cancel
-                </button>
-              </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">
+                Per USDC staked
+              </label>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={goldenTicketRate.perUsdc ?? 10}
+                onChange={(e) =>
+                  setGoldenTicketRate((r) => ({ ...r, perUsdc: parseFloat(e.target.value) || 10 }))
+                }
+                className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:text-white text-sm"
+              />
             </div>
-          )}
-          <div className="flex flex-wrap gap-2 items-center">
-            <button
-              type="button"
-              onClick={() => setGoldenEditor({ ...emptyGoldenRange(), _editIndex: -1 })}
-              className="px-3 py-2 bg-amber-600 text-white rounded-lg text-sm font-semibold"
-            >
-              + Add range
-            </button>
-            <button
-              type="button"
-              onClick={saveGoldenRanges}
-              disabled={savingGolden}
-              className="px-5 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 text-sm font-semibold"
-            >
-              {savingGolden ? 'Saving…' : 'Save golden ticket ranges'}
-            </button>
           </div>
+          <p className="text-sm text-amber-800 dark:text-amber-200 mb-4">
+            Preview:{' '}
+            <strong>
+              {goldenTicketRate.tickets || 1} golden ticket{(goldenTicketRate.tickets || 1) === 1 ? '' : 's'} per $
+              {goldenTicketRate.perUsdc || 10} USDC
+            </strong>
+          </p>
+          <button
+            type="button"
+            onClick={saveGoldenTicketRate}
+            disabled={savingGolden}
+            className="px-5 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 text-sm font-semibold"
+          >
+            {savingGolden ? 'Saving…' : 'Save golden ticket rate'}
+          </button>
         </div>
 
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">

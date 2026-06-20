@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import api from '../utils/api';
 import Modal from '../components/Modal';
 import { formatUsdAmount } from '../utils/money';
+import JackpotPoolsBanner, { jackpotPoolsFromItem } from '../components/JackpotPoolsBanner';
 import { fetchPollImpliedBatch, rankPollOptionsByImplied } from '../utils/pollImplied';
 
 const CARD_BASE =
@@ -479,13 +480,6 @@ const formatGMTTime = (date) => {
   );
 };
 
-const JackpotLine = ({ amount }) => (
-  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4 leading-snug">
-    <span className="font-bold text-gray-900 dark:text-white">Jackpot pool</span>{' '}
-    <span className="font-semibold tabular-nums text-red-600 dark:text-red-400">{formatUsdAmount(amount)}</span>
-  </p>
-);
-
 const CardActions = ({ freeEnabled, marketEnabled, freeTo, boostTo, marketTo }) => (
   <div className="mt-auto flex flex-wrap gap-2 pt-1">
     {freeEnabled ? (
@@ -507,10 +501,7 @@ const CardActions = ({ freeEnabled, marketEnabled, freeTo, boostTo, marketTo }) 
 const MatchCard = ({ match, featured = false, sponsored = false }) => {
   const freeEnabled = match.freePredictionEnabled !== false;
   const marketEnabled = match.marketEnabled !== false;
-  const jackpotAmount =
-    match.isResolved && match.originalFreeJackpotPool
-      ? match.originalFreeJackpotPool
-      : match.freeJackpotPool || 0;
+  const { freeJackpot, boostJackpot } = jackpotPoolsFromItem(match);
 
   return (
     <article
@@ -575,7 +566,7 @@ const MatchCard = ({ match, featured = false, sponsored = false }) => {
           </div>
         </div>
 
-        <JackpotLine amount={jackpotAmount} />
+        <JackpotPoolsBanner freeJackpot={freeJackpot} boostJackpot={boostJackpot} compact className="mb-4" />
 
         <CardActions
           freeEnabled={freeEnabled}
@@ -593,8 +584,7 @@ const PollCard = ({ poll, sponsored = false, featured = false, impliedByMarketId
   const freeEnabled = poll.freePredictionEnabled !== false;
   const marketEnabled = poll.marketEnabled !== false;
   const { top, total, hasMore } = rankPollOptionsByImplied(poll, impliedByMarketId, 3);
-  const jackpotAmount =
-    poll.isResolved && poll.originalFreeJackpotPool ? poll.originalFreeJackpotPool : poll.freeJackpotPool || 0;
+  const { freeJackpot, boostJackpot } = jackpotPoolsFromItem(poll);
 
   return (
     <article
@@ -692,7 +682,7 @@ const PollCard = ({ poll, sponsored = false, featured = false, impliedByMarketId
           </div>
         )}
 
-        <JackpotLine amount={jackpotAmount} />
+        <JackpotPoolsBanner freeJackpot={freeJackpot} boostJackpot={boostJackpot} compact className="mb-4" />
 
         <CardActions
           freeEnabled={freeEnabled}
