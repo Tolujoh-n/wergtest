@@ -302,6 +302,13 @@ export default function WalletPage() {
           )}
         </div>
 
+        <div className="rounded-lg border border-blue-200/70 dark:border-blue-800/50 bg-blue-50/80 dark:bg-blue-950/30 px-4 py-3 text-sm text-blue-900 dark:text-blue-100 leading-relaxed">
+          <strong className="font-semibold">Main wallet</strong> is your on-chain account (USDC + ETH for gas).{' '}
+          <strong className="font-semibold">WRG trading vault</strong> is a separate balance used only for market
+          orderbook trades — deposit USDC into the vault before buying shares; withdrawals return USDC to your main
+          wallet.
+        </div>
+
         {account && (
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 space-y-4">
             <div className="flex flex-wrap gap-2 justify-end">
@@ -330,19 +337,29 @@ export default function WalletPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="p-4 rounded-lg border border-gray-200 dark:border-gray-700">
-                <div className="text-xs text-gray-500 dark:text-gray-400">Base ETH (gas)</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
+                  Main wallet · Base ETH (gas)
+                </div>
                 <div className="text-2xl font-bold text-gray-900 dark:text-white">
                   {Number(ethBalance || 0).toFixed(6)} ETH
                 </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                  Pays network fees for boosts, claims, and transfers.
+                </p>
               </div>
               <div className="p-4 rounded-lg border border-gray-200 dark:border-gray-700">
-                <div className="text-xs text-gray-500 dark:text-gray-400">USDC</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
+                  Main wallet · USDC
+                </div>
                 <div className="text-2xl font-bold text-gray-900 dark:text-white">
                   {formatUsdAmount(usdcBalance || 0)}
                 </div>
                 <div className="text-xs text-gray-500 dark:text-gray-400">
                   {Number(usdcBalance || 0).toFixed(2)} USDC
                 </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                  Use for boosts and vault deposits. Not spent directly on market fills.
+                </p>
               </div>
             </div>
           </div>
@@ -352,9 +369,10 @@ export default function WalletPage() {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
           <div className="flex items-center justify-between mb-4 gap-3">
             <div>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Trading vault</h2>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">WRG trading vault</h2>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Deposit USDC here to trade on the orderbook. Your vault balance is what the matcher uses for fills.
+                Market orderbook balance — deposit from your main wallet USDC, then trade on Market tabs. Fills debit
+                this vault; winning claims pay USDC back to your main wallet.
               </p>
             </div>
             <button

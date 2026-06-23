@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
+import React, { createContext, useState, useContext, useEffect, useCallback, useRef } from 'react';
 import api from '../utils/api';
 
 const AuthContext = createContext();
@@ -18,6 +18,8 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [walletAddress, setWalletAddress] = useState(null);
+  const authCheckStartedRef = useRef(false);
+  const refreshInFlightRef = useRef(null);
 
   const touchActivity = useCallback(() => {
     try {
@@ -71,16 +73,27 @@ export const AuthProvider = ({ children }) => {
       setUser(userPayload);
       return userPayload;
     }
-    try {
-      const response = await api.get('/auth/me');
-      setUser(response.data.user);
-      return response.data.user;
-    } catch {
-      return null;
+    if (refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
     }
+    const promise = (async () => {
+      try {
+        const response = await api.get('/auth/me');
+        setUser(response.data.user);
+        return response.data.user;
+      } catch {
+        return null;
+      } finally {
+        refreshInFlightRef.current = null;
+      }
+    })();
+    refreshInFlightRef.current = promise;
+    return promise;
   }, []);
 
   useEffect(() => {
+    if (authCheckStartedRef.current) return;
+    authCheckStartedRef.current = true;
     checkAuth();
   }, [checkAuth]);
 
@@ -93,7 +106,6 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('token', response.data.token);
     touchActivity();
     setUser(response.data.user);
-    refreshUser().catch(() => {});
     return response.data;
   };
 
@@ -107,7 +119,6 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('token', response.data.token);
     touchActivity();
     setUser(response.data.user);
-    refreshUser().catch(() => {});
     return response.data;
   };
 
@@ -116,7 +127,6 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('token', response.data.token);
     touchActivity();
     setUser(response.data.user);
-    refreshUser().catch(() => {});
     return response.data;
   };
 
@@ -127,17 +137,14 @@ export const AuthProvider = ({ children }) => {
         localStorage.setItem('token', response.data.token);
         touchActivity();
         setUser(response.data.user);
-        refreshUser().catch(() => {});
       }
       setWalletAddress(address);
       return response.data;
     } catch (error) {
-      // If user doesn't exist, create account
       const signupResponse = await api.post('/auth/wallet-signup', { address });
       localStorage.setItem('token', signupResponse.data.token);
       touchActivity();
       setUser(signupResponse.data.user);
-      refreshUser().catch(() => {});
       setWalletAddress(address);
       return signupResponse.data;
     }

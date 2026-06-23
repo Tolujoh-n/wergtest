@@ -836,7 +836,7 @@ const Profile = () => {
               {/* <div className="flex justify-between">
                 <span className="text-gray-600 dark:text-gray-400">Total Volume</span>
                 <span className="font-semibold text-gray-900 dark:text-white">
-                  {marketPredictions.reduce((sum, p) => sum + (p.amount || 0), 0).toFixed(3)} ETH
+                  {marketPredictions.reduce((sum, p) => sum + (p.amount || p.totalInvested || 0), 0).toFixed(2)} USDC
                 </span>
               </div> */}
             </div>
@@ -1313,13 +1313,13 @@ const Profile = () => {
                         {getOutcome(prediction)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                        {prediction.type === 'free' 
-                          ? '0.0000 ETH'
+                        {prediction.type === 'free'
+                          ? '—'
                           : prediction.type === 'boost'
-                          ? `${(prediction.totalStake || prediction.amount || 0).toFixed(4)} ETH`
+                          ? `${(prediction.totalStake || prediction.amount || 0).toFixed(2)} USDC`
                           : prediction.type === 'market'
-                          ? `${(prediction.totalInvested || 0).toFixed(4)} ETH`
-                          : '0.0000 ETH'}
+                          ? `${(prediction.totalInvested || prediction.payout || prediction.shares || 0).toFixed(2)} USDC`
+                          : '—'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 rounded-full text-xs ${

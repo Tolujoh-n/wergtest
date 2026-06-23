@@ -52,6 +52,7 @@ import {
   estimateFreeJackpotPotentialWin,
 } from '../utils/predictionPayout';
 import { isEventOpenForPlay } from '../utils/eventOpen';
+import { formatEventDateGmt } from '../utils/eventDate';
 
 /** Draw outcome avatar when no team image is set. */
 function DrawOutcomeAvatar({ className = 'w-11 h-11' }) {
@@ -648,6 +649,7 @@ const MatchDetail = () => {
         navigate={navigate}
         locked={locked}
         onRefreshPrediction={fetchUserPrediction}
+        onRefreshItem={fetchData}
         walletAddress={account}
       />
     );
@@ -962,6 +964,11 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
                 <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2 text-left break-words">
                   {item.question}
                 </h1>
+                {item.date ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
+                    {formatEventDateGmt(item.date)}
+                  </p>
+                ) : null}
                 <p className="text-gray-600 dark:text-gray-400 text-left break-words">
                   {item.description}
                 </p>
@@ -1060,6 +1067,15 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
                 <p className={`text-lg mb-2 ${hasWon ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>
                   Status: {hasWon ? '✅ Won' : '❌ Lost'}
                 </p>
+              )}
+              {isResolved && hasWon && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/jackpot')}
+                  className="mt-4 inline-flex items-center justify-center px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-sm transition-colors"
+                >
+                  Claim your jackpot wins
+                </button>
               )}
               {!isResolved && (
                 <>
@@ -1177,6 +1193,7 @@ const BoostMatchView = ({
   navigate,
   locked = false,
   onRefreshPrediction,
+  onRefreshItem,
   walletAddress,
 }) => {
   // USDC ~ USD; no ETH conversion hints
@@ -1186,15 +1203,37 @@ const BoostMatchView = ({
   const [amount, setAmount] = useState('');
   const [stakeTargetPrediction, setStakeTargetPrediction] = useState(null);
   const [stakeAmount, setStakeAmount] = useState('');
-  const [fees, setFees] = useState({ platformFee: 10, boostJackpotFee: 5 });
+  const [fees, setFees] = useState({ platformFee: 10, freeJackpotFee: 5, boostJackpotFee: 5 });
   const [goldenTicketRate, setGoldenTicketRate] = useState(DEFAULT_GOLDEN_TICKET_BOOST_RATE);
   const [boostStats, setBoostStats] = useState(null);
+  const [freeJackpotStats, setFreeJackpotStats] = useState(null);
   const [boostBusy, setBoostBusy] = useState(false);
+  const [claimingId, setClaimingId] = useState(null);
   const { showNotification } = useNotification();
   useWallet();
 
-  const jackpotFeePct = fees.boostJackpotFee ?? fees.freeJackpotFee ?? 0;
+  const jackpotFeePct = fees.freeJackpotFee ?? fees.boostJackpotFee ?? 0;
   const platformFeePct = fees.platformFee ?? 10;
+
+  const fetchFreeJackpotStats = useCallback(async () => {
+    const itemId = item?._id;
+    if (!itemId) return;
+    try {
+      const path = isPoll
+        ? `/predictions/poll/${itemId}/free-jackpot-stats`
+        : `/predictions/match/${itemId}/free-jackpot-stats`;
+      const { data } = await api.get(path);
+      setFreeJackpotStats(data);
+    } catch (error) {
+      console.warn('free-jackpot-stats', error?.message || error);
+    }
+  }, [item?._id, isPoll]);
+
+  const effectiveFreeJackpotPool =
+    freeJackpotStats?.freeJackpotPool ??
+    (item.isResolved && item.originalFreeJackpotPool
+      ? item.originalFreeJackpotPool
+      : item.freeJackpotPool || 0);
 
   const fetchBoostStats = useCallback(async () => {
     const itemId = item?._id;
@@ -1220,7 +1259,7 @@ const BoostMatchView = ({
           api.get('/superadmin/get-fees'),
           api.get('/tickets/balances'),
         ]);
-        setFees(feesRes.data || { platformFee: 10, boostJackpotFee: 5 });
+        setFees(feesRes.data || { platformFee: 10, freeJackpotFee: 5, boostJackpotFee: 5 });
         const rate =
           balRes.data?.goldenTicketBoostRate ||
           (Array.isArray(balRes.data?.goldenTicketBoostRanges) && balRes.data.goldenTicketBoostRanges.length
@@ -1233,11 +1272,13 @@ const BoostMatchView = ({
     };
     load();
     fetchBoostStats();
-  }, [fetchBoostStats, item?.boostPool]);
+    fetchFreeJackpotStats();
+  }, [fetchBoostStats, fetchFreeJackpotStats, item?.boostPool, item?.freeJackpotPool]);
 
   useEffect(() => {
     fetchBoostStats();
-  }, [boostPredictions, fetchBoostStats]);
+    fetchFreeJackpotStats();
+  }, [boostPredictions, fetchBoostStats, fetchFreeJackpotStats]);
 
   const handleConfirmBoost = async () => {
     if (locked || !selectedOutcome || !amount || boostBusy) return;
@@ -1250,7 +1291,9 @@ const BoostMatchView = ({
         await onPredict(selectedOutcome, amount);
       }
       await fetchBoostStats();
+      await fetchFreeJackpotStats();
       onRefreshPrediction?.();
+      onRefreshItem?.();
       setShowPredictModal(false);
       setAmount('');
       setSelectedOutcome(null);
@@ -1267,7 +1310,9 @@ const BoostMatchView = ({
     try {
       await onStakeAction(stakeTargetPrediction._id, 'add', stakeAmount, stakeTargetPrediction.outcome);
       await fetchBoostStats();
+      await fetchFreeJackpotStats();
       onRefreshPrediction?.();
+      onRefreshItem?.();
       setShowStakeModal(false);
       setStakeAmount('');
       setStakeTargetPrediction(null);
@@ -1368,6 +1413,10 @@ const BoostMatchView = ({
   const canModify = isEventOpenForPlay(item) && !isResolved;
 
   const handleClaimPrediction = async (prediction) => {
+    const predId = String(prediction?._id || '');
+    if (!predId || claimingId) return;
+
+    setClaimingId(predId);
     try {
       if (!item || !item.marketId) {
         showNotification('Market not found', 'error');
@@ -1435,6 +1484,8 @@ const BoostMatchView = ({
         error.message ||
         'Failed to claim';
       showNotification(msg, 'error');
+    } finally {
+      setClaimingId(null);
     }
   };
 
@@ -1542,6 +1593,11 @@ const BoostMatchView = ({
                 <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2 text-left break-words">
                   {item.question}
                 </h1>
+                {item.date ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
+                    {formatEventDateGmt(item.date)}
+                  </p>
+                ) : null}
                 <p className="text-gray-600 dark:text-gray-400 text-left break-words">
                   {item.description}
                 </p>
@@ -1559,11 +1615,7 @@ const BoostMatchView = ({
           )}
 
           <JackpotPoolsBanner
-            freeJackpot={
-              item.isResolved && item.originalFreeJackpotPool
-                ? item.originalFreeJackpotPool
-                : item.freeJackpotPool || 0
-            }
+            freeJackpot={effectiveFreeJackpotPool}
             boostJackpot={effectiveBoostPool}
             className="mb-6"
           />
@@ -1702,11 +1754,20 @@ const BoostMatchView = ({
 
                             onClick={() => handleClaimPrediction(wp)}
 
-                            className="px-5 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-semibold"
+                            disabled={Boolean(claimingId)}
+
+                            className="inline-flex items-center justify-center gap-2 min-w-[5.5rem] px-5 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
 
                           >
 
-                            Claim
+                            {claimingId === String(wp._id) ? (
+                              <>
+                                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                                Claiming…
+                              </>
+                            ) : (
+                              'Claim'
+                            )}
 
                           </button>
 
@@ -1912,11 +1973,20 @@ const BoostMatchView = ({
 
                               onClick={() => handleClaimPrediction(pred)}
 
-                              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-green-500 text-white hover:bg-green-600"
+                              disabled={Boolean(claimingId)}
+
+                              className="inline-flex items-center justify-center gap-1.5 min-w-[4.5rem] px-3 py-1.5 text-xs font-semibold rounded-lg bg-green-500 text-white hover:bg-green-600 disabled:opacity-60 disabled:cursor-not-allowed"
 
                             >
 
-                              Claim
+                              {claimingId === String(pred._id) ? (
+                                <>
+                                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                                  Claiming…
+                                </>
+                              ) : (
+                                'Claim'
+                              )}
 
                             </button>
 
@@ -3694,6 +3764,11 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                 <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2 text-left break-words">
                   {itemData.question}
                 </h1>
+                {itemData.date ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
+                    {formatEventDateGmt(itemData.date)}
+                  </p>
+                ) : null}
                 <p className="text-gray-600 dark:text-gray-400 text-left break-words">
                   {itemData.description}
                 </p>
@@ -4713,7 +4788,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                               <div key={idx} className="mb-2 p-3 bg-gray-100 dark:bg-gray-700 rounded-lg">
                                 <p className="text-sm text-gray-600 dark:text-gray-400">Reward claimed</p>
                                 <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                                  {getDisplayOutcome(pred.outcome)}: {formatUsdAmount(pred.payout || 0)}
+                                  {getDisplayOutcome(pred.outcome)}: {formatJackpotUsd(pred.payout || pred.shares || 0)}
                                 </p>
                               </div>
                             );
@@ -4793,7 +4868,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                               }}
                               className="w-full mb-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
                             >
-                              Claim {getDisplayOutcome(pred.outcome)}: {formatUsdAmount(pred.payout || 0)}
+                              Claim {getDisplayOutcome(pred.outcome)}: {formatJackpotUsd(pred.payout || pred.shares || 0)}
                             </button>
                           );
                         })

@@ -32,9 +32,9 @@ const ITEMS_PER_PAGE = 20;
 const SuperAdmin = () => {
   const [activeTab, setActiveTab] = useState('fees');
   const [feeSettings, setFeeSettings] = useState({
-    platformFee: '',
-    marketPlatformFee: '',
-    freeJackpotFee: '',
+    platformFee: '10',
+    marketPlatformFee: '5',
+    freeJackpotFee: '5',
   });
   const [contractBalance, setContractBalance] = useState('');
   const [treasuryUnallocated, setTreasuryUnallocated] = useState('');
@@ -231,22 +231,24 @@ const SuperAdmin = () => {
       return;
     }
     try {
-      // First, set fees on blockchain
-      const txHash = await setFeesOnChain(
-        parseFloat(feeSettings.platformFee || 0),
-        0,
-        parseFloat(feeSettings.marketPlatformFee || 0),
-        parseFloat(feeSettings.freeJackpotFee || 0)
-      );
+      const platform = parseFloat(feeSettings.platformFee || 0);
+      const market = parseFloat(feeSettings.marketPlatformFee || 0);
+      const freeJackpot = parseFloat(feeSettings.freeJackpotFee || 0);
+      // On-chain boost stakes use boostJackpotFee — mirror freeJackpotFee so both fees apply on boost.
+      const txHash = await setFeesOnChain(platform, freeJackpot, market, freeJackpot);
       showNotification(`Fees set on blockchain! TX: ${txHash.slice(0, 10)}...`, 'success');
       await logTx({
         action: 'set_fees',
         txHash,
-        meta: { ...feeSettings },
+        meta: { platformFee: platform, marketPlatformFee: market, freeJackpotFee: freeJackpot },
       });
-      
-      // Then update backend
-      await api.post('/superadmin/set-fees', feeSettings);
+
+      await api.post('/superadmin/set-fees', {
+        platformFee: platform,
+        marketPlatformFee: market,
+        freeJackpotFee: freeJackpot,
+        boostJackpotFee: freeJackpot,
+      });
       showModalMessage('Success', 'Fees updated successfully on blockchain and backend!', 'success');
       await handleGetFees();
     } catch (error) {
@@ -257,16 +259,19 @@ const SuperAdmin = () => {
 
   const handleGetFees = async () => {
     try {
-      // Try to get from blockchain first
+      const normalize = (raw) => ({
+        platformFee: String(raw?.platformFee ?? 10),
+        marketPlatformFee: String(raw?.marketPlatformFee ?? 5),
+        freeJackpotFee: String(raw?.freeJackpotFee ?? raw?.boostJackpotFee ?? 5),
+      });
       try {
         const chainFees = await getFeesFromChain();
-        setFeeSettings(chainFees);
+        setFeeSettings(normalize(chainFees));
         showNotification('Fees loaded from blockchain', 'success');
       } catch (chainError) {
         console.log('Could not get fees from chain, using backend:', chainError);
-        // Fallback to backend
         const response = await api.get('/superadmin/get-fees');
-        setFeeSettings(response.data);
+        setFeeSettings(normalize(response.data));
       }
     } catch (error) {
       showModalMessage('Error', error.response?.data?.message || 'Failed to get fees', 'error');
@@ -703,6 +708,9 @@ const SuperAdmin = () => {
                   className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
                   placeholder="5"
                 />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Applied on boost stakes and market orderbook trades. Synced to the contract as the boost jackpot fee.
+                </p>
               </div>
               <div className="flex space-x-2">
                 <button

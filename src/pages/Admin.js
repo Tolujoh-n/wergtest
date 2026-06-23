@@ -19,6 +19,7 @@ import { evenPctSplit, startingPricesFromPctRows, distributeEvenlyWithBalance } 
 import TiptapEditor from '../components/TiptapEditor';
 import ImageUpload from '../components/ImageUpload';
 import { formatUsdAmount } from '../utils/money';
+import { utcDatetimeLocalToIso, utcIsoToDatetimeLocal, formatEventDateGmt } from '../utils/eventDate';
 // USDC ~ USD; show $ directly (no ETH conversion hints)
 
 const ITEMS_PER_PAGE = 20;
@@ -1770,6 +1771,7 @@ const PollsTab = ({ polls, cups, stages, loading, tablePage, setTablePage, items
           <thead className="bg-gray-50 dark:bg-gray-700">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Question</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Date (GMT)</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Type</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Status</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Result</th>
@@ -1784,6 +1786,9 @@ const PollsTab = ({ polls, cups, stages, loading, tablePage, setTablePage, items
                 <tr key={poll._id}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
                     {poll.question}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    {poll.date ? formatEventDateGmt(poll.date) : '—'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {poll.type}
@@ -1859,7 +1864,7 @@ const PollsTab = ({ polls, cups, stages, loading, tablePage, setTablePage, items
               ))
             ) : (
               <tr>
-                <td colSpan="5" className="px-6 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                <td colSpan="6" className="px-6 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
                   No polls found. Create one to get started!
                 </td>
               </tr>
@@ -1993,6 +1998,7 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
     isFeatured: false,
     isSponsored: false,
     sponsoredImages: [],
+    date: '',
     lockedTime: '',
     options: [],
   });
@@ -2101,6 +2107,7 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
         freePredictionEnabled: formData.freePredictionEnabled,
         marketEnabled: formData.marketEnabled,
         startingPrices,
+        date: utcDatetimeLocalToIso(formData.date),
       };
 
       submitData.optionType = 'options';
@@ -2167,6 +2174,21 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
             <option key={cup._id} value={cup._id}>{cup.name}</option>
           ))}
         </select>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Event date &amp; time (GMT) <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="datetime-local"
+            value={formData.date}
+            onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+            required
+          />
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            Enter the wall time in GMT — this is exactly what users will see.
+          </p>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Min tickets per free pick</label>
@@ -5111,6 +5133,7 @@ const EditPollModal = ({ poll, cups, onClose, onSubmit }) => {
     freePredictionEnabled: poll.freePredictionEnabled !== false,
     marketEnabled: poll.marketEnabled !== false,
     sponsoredImages: poll.sponsoredImages || [],
+    date: utcIsoToDatetimeLocal(poll.date || poll.createdAt),
     lockedTime: poll.lockedTime ? new Date(poll.lockedTime).toISOString().slice(0, 16) : '',
     optionType: 'options',
     options: poll.options
@@ -5156,6 +5179,8 @@ const EditPollModal = ({ poll, cups, onClose, onSubmit }) => {
       yesLiquidity: parseFloat(opt.yesLiquidity) || 0,
       noLiquidity: parseFloat(opt.noLiquidity) || 0,
     }));
+
+    submitData.date = utcDatetimeLocalToIso(formData.date);
     
     onSubmit(submitData);
   };
@@ -5205,6 +5230,21 @@ const EditPollModal = ({ poll, cups, onClose, onSubmit }) => {
             <option key={cup._id} value={cup._id}>{cup.name}</option>
           ))}
         </select>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Event date &amp; time (GMT)
+          </label>
+          <input
+            type="datetime-local"
+            value={formData.date}
+            onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+            className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+          />
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            Enter the wall time in GMT — this is exactly what users will see.
+          </p>
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="flex items-center gap-2">

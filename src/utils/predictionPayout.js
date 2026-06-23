@@ -70,12 +70,9 @@ export function estimateBoostPotentialWin({
   const existing = Math.max(0, Number(existingNetStake) || 0);
   const netNew = netStakeFromGross(grossStakeUsdc, platformFeePct, jackpotFeePct);
   const userStake = existing + netNew;
-  const outcomeTotal = Math.max(
-    Number(winningOutcomeTotalStake) || 0,
-    userStake
-  );
-  if (userStake <= 0 || pool <= 0 || outcomeTotal <= 0) return null;
-  const poolShare = pool * (userStake / outcomeTotal);
-  const stakeForDisplay = existing + (Number(grossStakeUsdc) || 0);
-  return stakeForDisplay + poolShare;
+  const outcomeTotal = Math.max(Number(winningOutcomeTotalStake) || 0, userStake);
+  const projectedPool = pool + (Number(grossStakeUsdc) > 0 ? netNew : 0);
+  if (userStake <= 0 || projectedPool <= 0 || outcomeTotal <= 0) return null;
+  // Stake is already in the pool — winners split the full pool by net stake weight.
+  return projectedPool * (userStake / outcomeTotal);
 }
