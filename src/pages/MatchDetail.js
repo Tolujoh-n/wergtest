@@ -50,6 +50,9 @@ import {
   boostOutcomeStatsKey,
   estimateBoostPotentialWin,
   estimateFreeJackpotPotentialWin,
+  buildBoostStakeByOutcomeMap,
+  canonicalBoostOutcomeKey,
+  netBoostStakeAmount,
 } from '../utils/predictionPayout';
 import { isEventOpenForPlay } from '../utils/eventOpen';
 import { formatEventDateGmt } from '../utils/eventDate';
@@ -80,6 +83,30 @@ function OutcomeOptionAvatar({ image, label, sizeClass = 'w-11 h-11' }) {
     );
   }
   return <div className={`${sizeClass} rounded-full bg-slate-200 dark:bg-slate-700 shrink-0`} />;
+}
+
+function EventLockTimeNotice({ lockedTime, className = 'mb-4' }) {
+  if (!lockedTime) return null;
+  return (
+    <p className={`text-sm text-amber-800 dark:text-amber-200 ${className}`}>
+      Predictions lock: <span className="font-medium tabular-nums">{formatEventDateGmt(lockedTime)}</span>
+    </p>
+  );
+}
+
+function MatchEventMeta({ item, isPoll, className = 'mb-6 text-center' }) {
+  if (isPoll) return null;
+  return (
+    <div className={className}>
+      <p className="text-gray-600 dark:text-gray-400">
+        {`${new Date(item.date).toLocaleDateString()} • ${item.stageName || ''}`}
+      </p>
+      {item.description ? (
+        <p className="text-gray-600 dark:text-gray-400 mt-2 text-left sm:text-center break-words">{item.description}</p>
+      ) : null}
+      <EventLockTimeNotice lockedTime={item.lockedTime} className="mt-2" />
+    </div>
+  );
 }
 
 async function assertWalletUsdcForBoost(walletAddress, amountUsdc, showNotification) {
@@ -438,18 +465,9 @@ const MatchDetail = () => {
           prediction = list.find((p) => String(p._id) === String(predictionId)) || null;
         }
         if (!prediction && outcomeHint) {
-          const hint = String(outcomeHint).trim().toLowerCase();
+          const hintKey = canonicalBoostOutcomeKey(outcomeHint, item, isPoll);
           prediction =
-            list.find((p) => {
-              const o = String(p.outcome || '').trim().toLowerCase();
-              if (o === hint) return true;
-              if (!isPoll) {
-                if (hint === 'draw' && o === 'draw') return true;
-                if (hint === (item.teamA || '').trim().toLowerCase() && (o === 'teama' || o === hint)) return true;
-                if (hint === (item.teamB || '').trim().toLowerCase() && (o === 'teamb' || o === hint)) return true;
-              }
-              return false;
-            }) || null;
+            list.find((p) => canonicalBoostOutcomeKey(p.outcome, item, isPoll) === hintKey) || null;
         }
       } catch {
         prediction = null;
@@ -972,6 +990,7 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
                 <p className="text-gray-600 dark:text-gray-400 text-left break-words">
                   {item.description}
                 </p>
+                <EventLockTimeNotice lockedTime={item.lockedTime} className="mt-2 text-left" />
               </div>
             </div>
           ) : (
@@ -979,9 +998,7 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
               <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-4 text-center">
                 {`${item.teamA} vs ${item.teamB}`}
               </h1>
-              <p className="text-gray-600 dark:text-gray-400 mb-6 text-center">
-                {`${new Date(item.date).toLocaleDateString()} • ${item.stageName || ''}`}
-              </p>
+              <MatchEventMeta item={item} isPoll={isPoll} />
             </>
           )}
 
@@ -1363,26 +1380,28 @@ const BoostMatchView = ({
   };
 
   const outcomesMatch = (predOutcome, optionText) => {
-    const a = String(predOutcome || '').trim();
-    const b = String(optionText || '').trim();
-    if (!a || !b) return false;
-    if (a.toLowerCase() === b.toLowerCase()) return true;
-    if (!isPoll) {
-      const lower = a.toLowerCase();
-      if (lower === 'teama' && b === item.teamA) return true;
-      if (lower === 'teamb' && b === item.teamB) return true;
-      if (lower === 'draw' && b.toLowerCase() === 'draw') return true;
-    }
-    return getDisplayOutcome(a).toLowerCase() === b.toLowerCase();
+    const a = canonicalBoostOutcomeKey(predOutcome, item, isPoll);
+    const b = canonicalBoostOutcomeKey(optionText, item, isPoll);
+    return Boolean(a && b && a === b);
   };
 
-  const findBoostForOption = (optionText) =>
-    boostPredictions.find((p) => outcomesMatch(p.outcome, optionText)) || null;
-
-  const totalBoosted = boostPredictions.reduce(
-    (sum, p) => sum + Number(p.totalStake || p.amount || 0),
-    0
+  const boostStakeByOutcome = useMemo(
+    () => buildBoostStakeByOutcomeMap(boostPredictions, item, isPoll),
+    [boostPredictions, item, isPoll]
   );
+
+  const findBoostForOption = (optionText) => {
+    const key = canonicalBoostOutcomeKey(optionText, item, isPoll);
+    return boostStakeByOutcome.get(key) || null;
+  };
+
+  const totalBoosted = useMemo(() => {
+    let sum = 0;
+    boostStakeByOutcome.forEach((pred) => {
+      sum += netBoostStakeAmount(pred);
+    });
+    return sum;
+  }, [boostStakeByOutcome]);
 
   const isPredictionWon = (pred) =>
     pred &&
@@ -1601,6 +1620,7 @@ const BoostMatchView = ({
                 <p className="text-gray-600 dark:text-gray-400 text-left break-words">
                   {item.description}
                 </p>
+                <EventLockTimeNotice lockedTime={item.lockedTime} className="mt-2 text-left" />
               </div>
             </div>
           ) : (
@@ -1608,9 +1628,7 @@ const BoostMatchView = ({
               <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-4 text-center">
                 {`${item.teamA} vs ${item.teamB}`}
               </h1>
-              <p className="text-gray-600 dark:text-gray-400 mb-6 text-center">
-                {`${new Date(item.date).toLocaleDateString()} • ${item.stageName || ''}`}
-              </p>
+              <MatchEventMeta item={item} isPoll={isPoll} />
             </>
           )}
 
@@ -3772,6 +3790,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                 <p className="text-gray-600 dark:text-gray-400 text-left break-words">
                   {itemData.description}
                 </p>
+                <EventLockTimeNotice lockedTime={itemData.lockedTime} className="mt-2 text-left" />
               </div>
             </div>
           ) : (
@@ -3779,9 +3798,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
               <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2 text-center">
                 {`${itemData.teamA} vs ${itemData.teamB}`}
               </h1>
-              <p className="text-gray-600 dark:text-gray-400 text-center">
-                {`${new Date(itemData.date).toLocaleDateString()} • ${itemData.stageName || ''}`}
-              </p>
+              <MatchEventMeta item={itemData} isPoll={false} className="mb-4 text-center" />
             </>
           )}
           {isResolved && (

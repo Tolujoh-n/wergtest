@@ -6,7 +6,17 @@
 export function boostOutcomeStatsKey(outcome, item, isPoll = false) {
   const o = String(outcome || '').trim();
   if (!o) return o;
-  if (isPoll) return o;
+  if (isPoll) {
+    if (item?.optionType === 'options' && Array.isArray(item?.options)) {
+      const hit = item.options.find(
+        (opt) => String(opt?.text || '').trim().toLowerCase() === o.toLowerCase()
+      );
+      if (hit) return String(hit.text).trim();
+    }
+    const up = o.toUpperCase();
+    if (up === 'YES' || up === 'NO') return up;
+    return o;
+  }
   const teamA = String(item?.teamA || '').trim();
   const teamB = String(item?.teamB || '').trim();
   const lower = o.toLowerCase();
@@ -14,6 +24,39 @@ export function boostOutcomeStatsKey(outcome, item, isPoll = false) {
   if (o === 'TeamB' || lower === 'teamb' || (teamB && lower === teamB.toLowerCase())) return 'TeamB';
   if (o === 'Draw' || lower === 'draw') return 'Draw';
   return o;
+}
+
+/** Canonical key for matching boost rows to UI options. */
+export function canonicalBoostOutcomeKey(outcome, item, isPoll = false) {
+  return boostOutcomeStatsKey(outcome, item, isPoll);
+}
+
+export function netBoostStakeAmount(pred) {
+  const stake = Number(pred?.totalStake ?? pred?.amount ?? 0);
+  return Number.isFinite(stake) && stake > 0 ? stake : 0;
+}
+
+/** Build map optionKey -> merged boost prediction for table display. */
+export function buildBoostStakeByOutcomeMap(boostPredictions, item, isPoll = false) {
+  const map = new Map();
+  for (const pred of boostPredictions || []) {
+    const key = canonicalBoostOutcomeKey(pred.outcome, item, isPoll);
+    if (!key) continue;
+    const stake = netBoostStakeAmount(pred);
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, { ...pred, totalStake: stake, amount: stake });
+      continue;
+    }
+    const combined = stake + netBoostStakeAmount(existing);
+    map.set(key, {
+      ...existing,
+      ...pred,
+      totalStake: combined,
+      amount: combined,
+    });
+  }
+  return map;
 }
 
 export function estimateMarketOrderbookPotentialWin({

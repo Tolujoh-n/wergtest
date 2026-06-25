@@ -5,6 +5,7 @@ import Modal from '../components/Modal';
 import { formatUsdAmount } from '../utils/money';
 import JackpotPoolsBanner, { jackpotPoolsFromItem } from '../components/JackpotPoolsBanner';
 import { fetchPollImpliedBatch, rankPollOptionsByImplied } from '../utils/pollImplied';
+import { normalizeSponsoredImages, normalizeSponsoredImageEntry } from '../utils/sponsoredImages';
 
 const CARD_BASE =
   'group relative flex flex-col h-full rounded-xl border bg-white dark:bg-gray-900 ' +
@@ -517,14 +518,30 @@ const MatchCard = ({ match, featured = false, sponsored = false }) => {
               Sponsored
             </span>
             <div className="flex gap-2 mt-2 overflow-x-auto">
-              {match.sponsoredImages.map((img, idx) => (
-                <img
-                  key={idx}
-                  src={img}
-                  alt=""
-                  className="h-12 object-contain rounded-md border border-gray-100 dark:border-gray-800"
-                />
-              ))}
+              {normalizeSponsoredImages(match.sponsoredImages).map((img, idx) => {
+                const entry = normalizeSponsoredImageEntry(img);
+                if (!entry) return null;
+                const inner = (
+                  <img
+                    src={entry.url}
+                    alt=""
+                    className="h-12 object-contain rounded-md border border-gray-100 dark:border-gray-800"
+                  />
+                );
+                return entry.link ? (
+                  <a
+                    key={idx}
+                    href={entry.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 hover:opacity-90 transition-opacity"
+                  >
+                    {inner}
+                  </a>
+                ) : (
+                  <span key={idx} className="shrink-0">{inner}</span>
+                );
+              })}
             </div>
           </div>
         )}
@@ -600,14 +617,30 @@ const PollCard = ({ poll, sponsored = false, featured = false, impliedByMarketId
               Sponsored
             </span>
             <div className="flex gap-2 mt-2 overflow-x-auto">
-              {poll.sponsoredImages.map((img, idx) => (
-                <img
-                  key={idx}
-                  src={img}
-                  alt=""
-                  className="h-12 object-contain rounded-md border border-gray-100 dark:border-gray-800"
-                />
-              ))}
+              {normalizeSponsoredImages(poll.sponsoredImages).map((img, idx) => {
+                const entry = normalizeSponsoredImageEntry(img);
+                if (!entry) return null;
+                const inner = (
+                  <img
+                    src={entry.url}
+                    alt=""
+                    className="h-12 object-contain rounded-md border border-gray-100 dark:border-gray-800"
+                  />
+                );
+                return entry.link ? (
+                  <a
+                    key={idx}
+                    href={entry.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 hover:opacity-90 transition-opacity"
+                  >
+                    {inner}
+                  </a>
+                ) : (
+                  <span key={idx} className="shrink-0">{inner}</span>
+                );
+              })}
             </div>
           </div>
         )}
@@ -642,7 +675,7 @@ const PollCard = ({ poll, sponsored = false, featured = false, impliedByMarketId
           </div>
           <div className="text-right text-xs text-gray-500 dark:text-gray-400">
             <div className="font-medium text-gray-700 dark:text-gray-300 uppercase">{poll.type || 'poll'}</div>
-            <div className="tabular-nums">{formatGMTTime(poll.createdAt)}</div>
+            <div className="tabular-nums">{formatGMTTime(poll.date || poll.createdAt)}</div>
           </div>
         </div>
 

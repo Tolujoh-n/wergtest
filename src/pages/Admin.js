@@ -18,6 +18,8 @@ import TargetOddsInputs from '../components/TargetOddsInputs';
 import { evenPctSplit, startingPricesFromPctRows, distributeEvenlyWithBalance } from '../utils/targetOdds';
 import TiptapEditor from '../components/TiptapEditor';
 import ImageUpload from '../components/ImageUpload';
+import SponsoredImagesEditor from '../components/SponsoredImagesEditor';
+import { normalizeSponsoredImages } from '../utils/sponsoredImages';
 import { formatUsdAmount } from '../utils/money';
 import { utcDatetimeLocalToIso, utcIsoToDatetimeLocal, formatEventDateGmt } from '../utils/eventDate';
 // USDC ~ USD; show $ directly (no ETH conversion hints)
@@ -1119,6 +1121,7 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
   const [formData, setFormData] = useState({
     teamA: '',
     teamB: '',
+    description: '',
     date: '',
     cup: '',
     stage: '',
@@ -1222,6 +1225,7 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
         marketEnabled: formData.marketEnabled,
         drawEnabled: formData.drawEnabled,
         startingPrices,
+        sponsoredImages: normalizeSponsoredImages(formData.sponsoredImages),
         teamAYes: parseFloat(formData.teamAYes) || 0,
         teamANo: parseFloat(formData.teamANo) || 0,
         teamBYes: parseFloat(formData.teamBYes) || 0,
@@ -1288,6 +1292,13 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
           onChange={(e) => setFormData({ ...formData, date: e.target.value })}
           className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
           required
+        />
+        <textarea
+          placeholder="Description (optional)"
+          value={formData.description}
+          onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+          className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+          rows="3"
         />
         <select
           value={formData.cup}
@@ -1490,38 +1501,10 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
         
         {/* Sponsored Images - Show when sponsored is checked */}
         {formData.isSponsored && (
-          <div className="border p-4 rounded-lg dark:border-gray-700">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Sponsored Images (optional)
-            </label>
-            <div className="space-y-2">
-              {formData.sponsoredImages.map((img, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <img src={img} alt={`Sponsor ${idx + 1}`} className="w-16 h-16 object-cover rounded-lg" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const newImages = formData.sponsoredImages.filter((_, i) => i !== idx);
-                      setFormData({ ...formData, sponsoredImages: newImages });
-                    }}
-                    className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-              <ImageUpload
-                label="Add Sponsored Image"
-                value=""
-                onChange={(url) => {
-                  if (url) {
-                    setFormData({ ...formData, sponsoredImages: [...formData.sponsoredImages, url] });
-                  }
-                }}
-                folder="wergame/sponsored"
-              />
-            </div>
-          </div>
+          <SponsoredImagesEditor
+            images={formData.sponsoredImages}
+            onChange={(sponsoredImages) => setFormData({ ...formData, sponsoredImages })}
+          />
         )}
 
         {/* Locked Time */}
@@ -2106,6 +2089,7 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
         minFreeTickets: parseInt(formData.minFreeTickets, 10) || 1,
         freePredictionEnabled: formData.freePredictionEnabled,
         marketEnabled: formData.marketEnabled,
+        sponsoredImages: normalizeSponsoredImages(formData.sponsoredImages),
         startingPrices,
         date: utcDatetimeLocalToIso(formData.date),
       };
@@ -2311,38 +2295,10 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
         
         {/* Sponsored Images - Show when sponsored is checked */}
         {formData.isSponsored && (
-          <div className="border p-4 rounded-lg dark:border-gray-700">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Sponsored Images (optional)
-            </label>
-            <div className="space-y-2">
-              {formData.sponsoredImages.map((img, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <img src={img} alt={`Sponsor ${idx + 1}`} className="w-16 h-16 object-cover rounded-lg" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const newImages = formData.sponsoredImages.filter((_, i) => i !== idx);
-                      setFormData({ ...formData, sponsoredImages: newImages });
-                    }}
-                    className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-              <ImageUpload
-                label="Add Sponsored Image"
-                value=""
-                onChange={(url) => {
-                  if (url) {
-                    setFormData({ ...formData, sponsoredImages: [...formData.sponsoredImages, url] });
-                  }
-                }}
-                folder="wergame/sponsored"
-              />
-            </div>
-          </div>
+          <SponsoredImagesEditor
+            images={formData.sponsoredImages}
+            onChange={(sponsoredImages) => setFormData({ ...formData, sponsoredImages })}
+          />
         )}
 
         {/* Locked Time */}
@@ -3374,12 +3330,11 @@ const CreateBlogModal = ({ onClose, onSubmit }) => {
           rows="3"
           required
         />
-        <input
-          type="url"
-          placeholder="Thumbnail Image URL"
+        <ImageUpload
+          label="Blog thumbnail"
           value={formData.thumbnail}
-          onChange={(e) => setFormData({ ...formData, thumbnail: e.target.value })}
-          className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+          onChange={(url) => setFormData({ ...formData, thumbnail: url })}
+          folder="wergame/blogs"
         />
         <div className="grid grid-cols-2 gap-4">
           <input
@@ -3485,12 +3440,11 @@ const EditBlogModal = ({ blog, onClose, onSubmit }) => {
           rows="3"
           required
         />
-        <input
-          type="url"
-          placeholder="Thumbnail Image URL"
+        <ImageUpload
+          label="Blog thumbnail"
           value={formData.thumbnail}
-          onChange={(e) => setFormData({ ...formData, thumbnail: e.target.value })}
-          className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+          onChange={(url) => setFormData({ ...formData, thumbnail: url })}
+          folder="wergame/blogs"
         />
         <div className="grid grid-cols-2 gap-4">
           <input
@@ -4819,6 +4773,7 @@ const EditMatchModal = ({ match, cups, stages, onClose, onSubmit }) => {
   const [formData, setFormData] = useState({
     teamA: match.teamA || '',
     teamB: match.teamB || '',
+    description: match.description || '',
     date: match.date ? new Date(match.date).toISOString().slice(0, 16) : '',
     cup: match.cup?._id || match.cup || '',
     stage: match.stage?._id || match.stage || '',
@@ -4827,7 +4782,7 @@ const EditMatchModal = ({ match, cups, stages, onClose, onSubmit }) => {
     isSponsored: match.isSponsored || false,
     freePredictionEnabled: match.freePredictionEnabled !== false,
     marketEnabled: match.marketEnabled !== false,
-    sponsoredImages: match.sponsoredImages || [],
+    sponsoredImages: normalizeSponsoredImages(match.sponsoredImages),
     lockedTime: match.lockedTime ? new Date(match.lockedTime).toISOString().slice(0, 16) : '',
     teamAImage: match.teamAImage || '',
     teamBImage: match.teamBImage || '',
@@ -4851,6 +4806,7 @@ const EditMatchModal = ({ match, cups, stages, onClose, onSubmit }) => {
     onSubmit({
       ...formData,
       stageName: selectedStage?.name || formData.stageName,
+      sponsoredImages: normalizeSponsoredImages(formData.sponsoredImages),
     });
   };
 
@@ -4897,6 +4853,13 @@ const EditMatchModal = ({ match, cups, stages, onClose, onSubmit }) => {
           onChange={(e) => setFormData({ ...formData, date: e.target.value })}
           className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
           required
+        />
+        <textarea
+          placeholder="Description (optional)"
+          value={formData.description}
+          onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+          className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+          rows="3"
         />
         <select
           value={formData.cup}
@@ -4965,38 +4928,10 @@ const EditMatchModal = ({ match, cups, stages, onClose, onSubmit }) => {
         
         {/* Sponsored Images - Show when sponsored is checked */}
         {formData.isSponsored && (
-          <div className="border p-4 rounded-lg dark:border-gray-700">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Sponsored Images (optional)
-            </label>
-            <div className="space-y-2">
-              {formData.sponsoredImages.map((img, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <img src={img} alt={`Sponsor ${idx + 1}`} className="w-16 h-16 object-cover rounded-lg" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const newImages = formData.sponsoredImages.filter((_, i) => i !== idx);
-                      setFormData({ ...formData, sponsoredImages: newImages });
-                    }}
-                    className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-              <ImageUpload
-                label="Add Sponsored Image"
-                value=""
-                onChange={(url) => {
-                  if (url) {
-                    setFormData({ ...formData, sponsoredImages: [...formData.sponsoredImages, url] });
-                  }
-                }}
-                folder="wergame/sponsored"
-              />
-            </div>
-          </div>
+          <SponsoredImagesEditor
+            images={formData.sponsoredImages}
+            onChange={(sponsoredImages) => setFormData({ ...formData, sponsoredImages })}
+          />
         )}
 
         {/* Locked Time */}
@@ -5132,7 +5067,7 @@ const EditPollModal = ({ poll, cups, onClose, onSubmit }) => {
     isSponsored: poll.isSponsored || false,
     freePredictionEnabled: poll.freePredictionEnabled !== false,
     marketEnabled: poll.marketEnabled !== false,
-    sponsoredImages: poll.sponsoredImages || [],
+    sponsoredImages: normalizeSponsoredImages(poll.sponsoredImages),
     date: utcIsoToDatetimeLocal(poll.date || poll.createdAt),
     lockedTime: poll.lockedTime ? new Date(poll.lockedTime).toISOString().slice(0, 16) : '',
     optionType: 'options',
@@ -5181,6 +5116,7 @@ const EditPollModal = ({ poll, cups, onClose, onSubmit }) => {
     }));
 
     submitData.date = utcDatetimeLocalToIso(formData.date);
+    submitData.sponsoredImages = normalizeSponsoredImages(formData.sponsoredImages);
     
     onSubmit(submitData);
   };
@@ -5370,38 +5306,10 @@ const EditPollModal = ({ poll, cups, onClose, onSubmit }) => {
         
         {/* Sponsored Images - Show when sponsored is checked */}
         {formData.isSponsored && (
-          <div className="border p-4 rounded-lg dark:border-gray-700">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Sponsored Images (optional)
-            </label>
-            <div className="space-y-2">
-              {formData.sponsoredImages.map((img, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <img src={img} alt={`Sponsor ${idx + 1}`} className="w-16 h-16 object-cover rounded-lg" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const newImages = formData.sponsoredImages.filter((_, i) => i !== idx);
-                      setFormData({ ...formData, sponsoredImages: newImages });
-                    }}
-                    className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-              <ImageUpload
-                label="Add Sponsored Image"
-                value=""
-                onChange={(url) => {
-                  if (url) {
-                    setFormData({ ...formData, sponsoredImages: [...formData.sponsoredImages, url] });
-                  }
-                }}
-                folder="wergame/sponsored"
-              />
-            </div>
-          </div>
+          <SponsoredImagesEditor
+            images={formData.sponsoredImages}
+            onChange={(sponsoredImages) => setFormData({ ...formData, sponsoredImages })}
+          />
         )}
 
         {/* Locked Time */}
