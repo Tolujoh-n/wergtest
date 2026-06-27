@@ -159,6 +159,8 @@ const MatchDetail = () => {
   const { account, ensureConnected, disconnect } = useWallet();
   const [walletInUseOpen, setWalletInUseOpen] = useState(false);
   const [walletInUseAddress, setWalletInUseAddress] = useState(null);
+  // Re-render trigger so the page auto-locks when the scheduled lock time is reached.
+  const [lockTick, setLockTick] = useState(0);
   
   // Set contract address on mount
   useEffect(() => {
@@ -191,10 +193,28 @@ const MatchDetail = () => {
     }
   }, [account, ensureConnected, user?.walletAddress]);
 
-  // Admin status only — not scheduled lockedTime
+  // Closed when admin locks/resolves OR the scheduled lock time is reached.
+  // lockTick is included so the value recomputes when the timer fires.
   const isLocked = useCallback(() => {
     const item = match || poll;
     return !isEventOpenForPlay(item);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match, poll, lockTick]);
+
+  // Auto-lock the UI exactly when the admin-scheduled lock time passes,
+  // even if no on-chain "locked" status has been set yet.
+  useEffect(() => {
+    const item = match || poll;
+    if (!item || !item.lockedTime) return undefined;
+    const lockMs = new Date(item.lockedTime).getTime();
+    if (!Number.isFinite(lockMs)) return undefined;
+    const delay = lockMs - Date.now();
+    if (delay <= 0) {
+      setLockTick((t) => t + 1);
+      return undefined;
+    }
+    const timer = setTimeout(() => setLockTick((t) => t + 1), delay + 500);
+    return () => clearTimeout(timer);
   }, [match, poll]);
 
   const fetchData = useCallback(async () => {
@@ -4141,7 +4161,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                   <div>
                     <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                       <div className="text-sm font-semibold text-gray-900 dark:text-white">Positions</div>
-                      {positionTableRows.length > 0 && !isResolved && (
+                      {positionTableRows.length > 0 && !isResolved && !locked && (
                         <button
                           type="button"
                           disabled={closingAllPositions || !!closingPositionKey}
@@ -4211,7 +4231,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                                     : '—'}
                                 </td>
                                 <td className="py-2.5 pr-1">
-                                  {isResolved ? (
+                                  {isResolved || locked ? (
                                     <span className="text-xs text-gray-400 dark:text-gray-500 tabular-nums" aria-hidden>
                                       —
                                     </span>
@@ -5029,6 +5049,12 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                   Sell
                 </button>
               </div>
+
+              {locked && !isResolved && (
+                <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-center text-sm font-semibold text-red-700 dark:text-red-300">
+                  Predictions are locked for this match/poll
+                </div>
+              )}
 
               {/* Option Selection */}
               <div className="mb-4">

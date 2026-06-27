@@ -6,6 +6,7 @@ import { formatUsdAmount } from '../utils/money';
 import JackpotPoolsBanner, { jackpotPoolsFromItem } from '../components/JackpotPoolsBanner';
 import { fetchPollImpliedBatch, rankPollOptionsByImplied } from '../utils/pollImplied';
 import { normalizeSponsoredImages, normalizeSponsoredImageEntry } from '../utils/sponsoredImages';
+import { effectiveEventStatus } from '../utils/eventOpen';
 
 const CARD_BASE =
   'group relative flex flex-col h-full rounded-xl border bg-white dark:bg-gray-900 ' +
@@ -572,9 +573,9 @@ const MatchCard = ({ match, featured = false, sponsored = false }) => {
               </span>
             ) : null}
             <span
-              className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide rounded-md border ${statusBadgeClass(match.status)}`}
+              className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide rounded-md border ${statusBadgeClass(effectiveEventStatus(match))}`}
             >
-              {match.status || '—'}
+              {effectiveEventStatus(match) || '—'}
             </span>
           </div>
           <div className="text-right text-xs text-gray-500 dark:text-gray-400">
@@ -668,9 +669,9 @@ const PollCard = ({ poll, sponsored = false, featured = false, impliedByMarketId
               </span>
             ) : null}
             <span
-              className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide rounded-md border ${statusBadgeClass(poll.status)}`}
+              className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide rounded-md border ${statusBadgeClass(effectiveEventStatus(poll))}`}
             >
-              {poll.status || '—'}
+              {effectiveEventStatus(poll) || '—'}
             </span>
           </div>
           <div className="text-right text-xs text-gray-500 dark:text-gray-400">
