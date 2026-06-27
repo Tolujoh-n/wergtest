@@ -23,12 +23,12 @@ export function isEventOpenForPlay(item, now = Date.now()) {
   return true;
 }
 
-/** Effective status for display: shows "locked" once the scheduled lock time passes. */
+/** Effective status for display: "completed" when resolved; "locked" when lock time passes. */
 export function effectiveEventStatus(item, now = Date.now()) {
   if (!item) return '';
+  if (item.isResolved === true) return 'completed';
   const s = String(item.status || '').toLowerCase().trim();
-  if (s === 'locked' || s === 'settled' || s === 'ended') return s;
-  if (item.isResolved === true) return 'locked';
+  if (s === 'locked' || s === 'settled' || s === 'ended' || s === 'completed') return s;
   if (isEventLockedByTime(item, now)) return 'locked';
   return s;
 }
