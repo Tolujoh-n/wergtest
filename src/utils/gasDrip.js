@@ -8,16 +8,20 @@ const POLL_ATTEMPTS = 10;
 
 async function readEthBalance(address) {
   if (!address) return 0;
-  try {
-    const url = BASE_CHAIN_PARAMS.rpcUrls[0];
-    const provider = new ethers.JsonRpcProvider(url, BASE_CHAIN_PARAMS.chainIdDecimal, {
-      staticNetwork: true,
-    });
-    const bal = await provider.getBalance(address);
-    return parseFloat(ethers.formatEther(bal));
-  } catch {
-    return 0;
+  const urls = BASE_CHAIN_PARAMS.rpcUrls || [];
+  for (let i = 0; i < urls.length; i += 1) {
+    try {
+      const provider = new ethers.JsonRpcProvider(urls[i], BASE_CHAIN_PARAMS.chainIdDecimal, {
+        staticNetwork: true,
+      });
+      // eslint-disable-next-line no-await-in-loop
+      const bal = await provider.getBalance(address);
+      return parseFloat(ethers.formatEther(bal));
+    } catch {
+      /* try next RPC */
+    }
   }
+  return 0;
 }
 
 export async function hasSufficientEthForGas(address, requiredEth = 0, bufferEth = DEFAULT_BUFFER_ETH) {
