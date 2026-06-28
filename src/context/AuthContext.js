@@ -5,6 +5,25 @@ const AuthContext = createContext();
 
 const INACTIVITY_LIMIT_MS = 30 * 60 * 1000; // 30 minutes
 const LAST_ACTIVITY_KEY = 'lastActivityAt';
+const CACHED_USER_KEY = 'authUser';
+
+function readCachedUser() {
+  try {
+    const raw = localStorage.getItem(CACHED_USER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedUser(user) {
+  try {
+    if (user) localStorage.setItem(CACHED_USER_KEY, JSON.stringify(user));
+    else localStorage.removeItem(CACHED_USER_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -15,11 +34,17 @@ export const useAuth = () => {
 };
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
+  const [user, setUserState] = useState(null);
   const [loading, setLoading] = useState(true);
   const [walletAddress, setWalletAddress] = useState(null);
   const authCheckStartedRef = useRef(false);
   const refreshInFlightRef = useRef(null);
+
+  // Single setter that keeps a cached copy so the session survives backend hiccups.
+  const setUser = useCallback((next) => {
+    setUserState(next);
+    writeCachedUser(next);
+  }, []);
 
   const touchActivity = useCallback(() => {
     try {
@@ -54,19 +79,43 @@ export const AuthProvider = ({ children }) => {
   }, [user, touchActivity]);
 
   const checkAuth = useCallback(async () => {
-    try {
-      const token = localStorage.getItem('token');
-      if (token) {
-        const response = await api.get('/auth/me');
+    const token = localStorage.getItem('token');
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+    // Show the cached user immediately so the UI isn't "logged out" while we verify.
+    const cached = readCachedUser();
+    if (cached) setUserState(cached);
+
+    // Retry transient failures (server 5xx / network) instead of nuking the session.
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const response = await api.get('/auth/me'); // eslint-disable-line no-await-in-loop
         setUser(response.data.user);
         touchActivity();
+        setLoading(false);
+        return;
+      } catch (error) {
+        const status = error?.response?.status;
+        // Only the server explicitly rejecting the token should end the session.
+        if (status === 401) {
+          localStorage.removeItem('token');
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+        // Transient error (500/502/503/network): keep the token, back off, retry.
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, attempt * 1500)); // eslint-disable-line no-await-in-loop
+        }
       }
-    } catch (error) {
-      localStorage.removeItem('token');
-    } finally {
-      setLoading(false);
     }
-  }, [touchActivity]);
+    // Still failing after retries — keep the token and the cached user so the session
+    // survives; a later refresh/navigation rehydrates fresh data once backend recovers.
+    setLoading(false);
+  }, [touchActivity, setUser]);
 
   const refreshUser = useCallback(async (userPayload) => {
     if (userPayload) {
@@ -81,7 +130,14 @@ export const AuthProvider = ({ children }) => {
         const response = await api.get('/auth/me');
         setUser(response.data.user);
         return response.data.user;
-      } catch {
+      } catch (error) {
+        const status = error?.response?.status;
+        if (status === 401) {
+          // Token genuinely invalid — end the session.
+          localStorage.removeItem('token');
+          setUser(null);
+        }
+        // Transient errors: keep current session/token untouched.
         return null;
       } finally {
         refreshInFlightRef.current = null;
@@ -89,7 +145,7 @@ export const AuthProvider = ({ children }) => {
     })();
     refreshInFlightRef.current = promise;
     return promise;
-  }, []);
+  }, [setUser]);
 
   useEffect(() => {
     if (authCheckStartedRef.current) return;
@@ -153,6 +209,7 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem(LAST_ACTIVITY_KEY);
+    writeCachedUser(null);
     try {
       // Ensure wallet is disconnected on logout (WalletProvider listens to this)
       window.dispatchEvent(new Event('app:logout'));
