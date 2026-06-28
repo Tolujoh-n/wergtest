@@ -39,6 +39,59 @@ function complementaryStartingPrice(value) {
   return formatStartingPrice(1 - Math.max(0, Math.min(1, n)));
 }
 
+const INITIAL_LIQUIDITY_MIN = 0.01;
+const INITIAL_LIQUIDITY_MAX = 10;
+const INITIAL_LIQUIDITY_DEFAULT = '0.01';
+
+/** Clamp above max while typing; allow transient empty/partial entry. */
+function sanitizeInitialLiquidityInput(raw) {
+  const s = String(raw ?? '').trim();
+  if (s === '') return '';
+  if (!/^\d*\.?\d*$/.test(s)) return null;
+  if (s === '.' || s.endsWith('.')) return s;
+  const n = parseFloat(s);
+  if (Number.isNaN(n)) return '';
+  if (n > INITIAL_LIQUIDITY_MAX) return String(INITIAL_LIQUIDITY_MAX);
+  return s;
+}
+
+/** On blur: never empty / never below min — snap to the 0.01–10 range. */
+function finalizeInitialLiquidityInput(raw) {
+  const s = String(raw ?? '').trim();
+  const n = parseFloat(s);
+  if (s === '' || Number.isNaN(n) || n < INITIAL_LIQUIDITY_MIN) return INITIAL_LIQUIDITY_DEFAULT;
+  if (n > INITIAL_LIQUIDITY_MAX) return String(INITIAL_LIQUIDITY_MAX);
+  return String(Math.round(n * 100) / 100);
+}
+
+function isInitialLiquidityValid(raw) {
+  const n = parseFloat(String(raw ?? '').trim());
+  return Number.isFinite(n) && n >= INITIAL_LIQUIDITY_MIN && n <= INITIAL_LIQUIDITY_MAX;
+}
+
+const initialLiquidityInputProps = {
+  type: 'number',
+  min: INITIAL_LIQUIDITY_MIN,
+  max: INITIAL_LIQUIDITY_MAX,
+  step: 0.01,
+  title: `${INITIAL_LIQUIDITY_MIN}–${INITIAL_LIQUIDITY_MAX} USDC`,
+  required: true,
+};
+
+const InitialLiquidityInput = ({ value, onChange, placeholder = '0', className }) => (
+  <input
+    {...initialLiquidityInputProps}
+    placeholder={placeholder}
+    value={value}
+    onChange={(e) => {
+      const next = sanitizeInitialLiquidityInput(e.target.value);
+      if (next !== null) onChange(next);
+    }}
+    onBlur={() => onChange(finalizeInitialLiquidityInput(value))}
+    className={className}
+  />
+);
+
 const AdminPoolModal = ({ kind, item, poolType, onClose }) => {
   const { showNotification } = useNotification();
   const [pool, setPool] = useState(0);
@@ -1131,12 +1184,12 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
     freePredictionEnabled: true,
     marketEnabled: true,
     // YES/NO seed liquidity per outcome (orderbook reference liquidity)
-    teamAYes: '',
-    teamANo: '',
-    teamBYes: '',
-    teamBNo: '',
-    drawYes: '',
-    drawNo: '',
+    teamAYes: INITIAL_LIQUIDITY_DEFAULT,
+    teamANo: INITIAL_LIQUIDITY_DEFAULT,
+    teamBYes: INITIAL_LIQUIDITY_DEFAULT,
+    teamBNo: INITIAL_LIQUIDITY_DEFAULT,
+    drawYes: INITIAL_LIQUIDITY_DEFAULT,
+    drawNo: INITIAL_LIQUIDITY_DEFAULT,
     isFeatured: false,
     isSponsored: false,
     sponsoredImages: [],
@@ -1209,6 +1262,17 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const liquidityFields = [
+      formData.teamAYes,
+      formData.teamANo,
+      formData.teamBYes,
+      formData.teamBNo,
+      ...(formData.drawEnabled ? [formData.drawYes, formData.drawNo] : []),
+    ];
+    if (!liquidityFields.every(isInitialLiquidityValid)) {
+      alert(`Initial liquidity must be between ${INITIAL_LIQUIDITY_MIN} and ${INITIAL_LIQUIDITY_MAX} USDC.`);
+      return;
+    }
     setIsSubmitting(true);
     try {
       const selectedStage = availableStages.find(s => s._id === formData.stage);
@@ -1400,25 +1464,22 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
         <div className="space-y-3">
           <p className="text-sm text-gray-600 dark:text-gray-400">
             Initial liquidity is per outcome and per side (YES / NO). This seeds the orderbook reference liquidity.
+            Each field: {INITIAL_LIQUIDITY_MIN}–{INITIAL_LIQUIDITY_MAX} USDC (required, defaults to {INITIAL_LIQUIDITY_DEFAULT}).
           </p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="border rounded-lg p-3 dark:border-gray-700">
               <div className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-2">{formData.teamA || 'Team A'}</div>
               <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="number"
-                  step="0.01"
+                <InitialLiquidityInput
                   placeholder="YES (USDC)"
                   value={formData.teamAYes}
-                  onChange={(e) => setFormData({ ...formData, teamAYes: e.target.value })}
+                  onChange={(teamAYes) => setFormData({ ...formData, teamAYes })}
                   className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:text-white text-sm"
                 />
-                <input
-                  type="number"
-                  step="0.01"
+                <InitialLiquidityInput
                   placeholder="NO (USDC)"
                   value={formData.teamANo}
-                  onChange={(e) => setFormData({ ...formData, teamANo: e.target.value })}
+                  onChange={(teamANo) => setFormData({ ...formData, teamANo })}
                   className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:text-white text-sm"
                 />
               </div>
@@ -1430,20 +1491,16 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
             <div className="border rounded-lg p-3 dark:border-gray-700">
               <div className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-2">Draw</div>
               <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="number"
-                  step="0.01"
+                <InitialLiquidityInput
                   placeholder="YES (USDC)"
                   value={formData.drawYes}
-                  onChange={(e) => setFormData({ ...formData, drawYes: e.target.value })}
+                  onChange={(drawYes) => setFormData({ ...formData, drawYes })}
                   className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:text-white text-sm"
                 />
-                <input
-                  type="number"
-                  step="0.01"
+                <InitialLiquidityInput
                   placeholder="NO (USDC)"
                   value={formData.drawNo}
-                  onChange={(e) => setFormData({ ...formData, drawNo: e.target.value })}
+                  onChange={(drawNo) => setFormData({ ...formData, drawNo })}
                   className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:text-white text-sm"
                 />
               </div>
@@ -1455,20 +1512,16 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
             <div className="border rounded-lg p-3 dark:border-gray-700">
               <div className="text-sm font-medium text-gray-800 dark:text-gray-200 mb-2">{formData.teamB || 'Team B'}</div>
               <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="number"
-                  step="0.01"
+                <InitialLiquidityInput
                   placeholder="YES (USDC)"
                   value={formData.teamBYes}
-                  onChange={(e) => setFormData({ ...formData, teamBYes: e.target.value })}
+                  onChange={(teamBYes) => setFormData({ ...formData, teamBYes })}
                   className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:text-white text-sm"
                 />
-                <input
-                  type="number"
-                  step="0.01"
+                <InitialLiquidityInput
                   placeholder="NO (USDC)"
                   value={formData.teamBNo}
-                  onChange={(e) => setFormData({ ...formData, teamBNo: e.target.value })}
+                  onChange={(teamBNo) => setFormData({ ...formData, teamBNo })}
                   className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:text-white text-sm"
                 />
               </div>
@@ -1991,7 +2044,7 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
     setFormData((prev) => {
       const newOptions = [
         ...prev.options,
-        { text: '', image: '', yesLiquidity: '', noLiquidity: '', targetPct: 0, quoteVolumeUsdc: 200 },
+        { text: '', image: '', yesLiquidity: INITIAL_LIQUIDITY_DEFAULT, noLiquidity: INITIAL_LIQUIDITY_DEFAULT, targetPct: 0, quoteVolumeUsdc: 200 },
       ];
       const keys = newOptions.map((_, i) => `__idx_${i}`);
       const balanceKey = keys[keys.length - 1];
@@ -2063,6 +2116,11 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const liquidityFields = formData.options.flatMap((opt) => [opt.yesLiquidity, opt.noLiquidity]);
+    if (!liquidityFields.every(isInitialLiquidityValid)) {
+      alert(`Initial liquidity must be between ${INITIAL_LIQUIDITY_MIN} and ${INITIAL_LIQUIDITY_MAX} USDC.`);
+      return;
+    }
     setIsSubmitting(true);
     try {
       const pctRows = formData.options.map((opt, i) => ({
@@ -2250,12 +2308,26 @@ const CreatePollModal = ({ cups, stages, onClose, onSubmit }) => {
                 />
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">YES liquidity (USDC)</label>
-                    <input type="number" step="0.01" placeholder="0" value={option.yesLiquidity} onChange={(e) => updateOption(index, 'yesLiquidity', e.target.value)} className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white" />
+                    <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                      YES liquidity (USDC) ({INITIAL_LIQUIDITY_MIN}–{INITIAL_LIQUIDITY_MAX})
+                    </label>
+                    <InitialLiquidityInput
+                      placeholder="0"
+                      value={option.yesLiquidity}
+                      onChange={(yesLiquidity) => updateOption(index, 'yesLiquidity', yesLiquidity)}
+                      className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+                    />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">NO liquidity (USDC)</label>
-                    <input type="number" step="0.01" placeholder="0" value={option.noLiquidity} onChange={(e) => updateOption(index, 'noLiquidity', e.target.value)} className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white" />
+                    <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                      NO liquidity (USDC) ({INITIAL_LIQUIDITY_MIN}–{INITIAL_LIQUIDITY_MAX})
+                    </label>
+                    <InitialLiquidityInput
+                      placeholder="0"
+                      value={option.noLiquidity}
+                      onChange={(noLiquidity) => updateOption(index, 'noLiquidity', noLiquidity)}
+                      className="w-full px-4 py-2 border rounded-lg dark:bg-gray-700 dark:text-white"
+                    />
                   </div>
                 </div>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
