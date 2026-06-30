@@ -7,8 +7,15 @@ export function chainIdDecimalToHex(decimal) {
 
 const CHAIN_ID_DECIMAL = Number(process.env.REACT_APP_CHAIN_ID || 8453);
 
-const rpcPrimary = process.env.REACT_APP_RPC_URL || 'https://mainnet.base.org';
-const rpcFallback = process.env.REACT_APP_RPC_URL_FALLBACK || 'https://base-rpc.publicnode.com';
+/** Public Base RPC for read-only browser calls (balances, contract views). */
+const rpcReadPrimary =
+  process.env.REACT_APP_RPC_READ_URL ||
+  process.env.REACT_APP_RPC_URL ||
+  'https://mainnet.base.org';
+
+/** Fallback RPC — used for both read retries (never expose private keys in the browser bundle). */
+const rpcFallback =
+  process.env.REACT_APP_RPC_URL_FALLBACK || 'https://base-rpc.publicnode.com';
 
 /** Wallet add/switch params (MetaMask / EIP-3085). */
 export const BASE_CHAIN_PARAMS = {
@@ -20,7 +27,7 @@ export const BASE_CHAIN_PARAMS = {
     symbol: 'ETH',
     decimals: 18,
   },
-  rpcUrls: [rpcPrimary, rpcFallback].filter((url, index, all) => url && all.indexOf(url) === index),
+  rpcUrls: [rpcReadPrimary, rpcFallback].filter((url, index, all) => url && all.indexOf(url) === index),
   blockExplorerUrls: [process.env.REACT_APP_BLOCK_EXPLORER || 'https://basescan.org'],
 };
 

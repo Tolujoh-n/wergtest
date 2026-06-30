@@ -365,6 +365,16 @@ const Jackpot = () => {
 
               <div className="space-y-2 mb-4 text-sm">
                 <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Total tickets:</span>
+                  <span className="font-semibold text-gray-900 dark:text-white tabular-nums">{jackpot.totalTickets ?? 0}</span>
+                </div>
+                {user && (jackpot.userTickets ?? 0) > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600 dark:text-gray-400">Your tickets:</span>
+                    <span className="font-semibold text-blue-600 dark:text-blue-400 tabular-nums">{jackpot.userTickets}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
                   <span className="text-gray-600 dark:text-gray-400">Participants:</span>
                   <span className="font-semibold text-gray-900 dark:text-white">{jackpot.participants || 0}</span>
                 </div>

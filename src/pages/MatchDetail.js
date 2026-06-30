@@ -769,7 +769,16 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
 
   useEffect(() => {
     fetchFreeJackpotStats();
-  }, [fetchFreeJackpotStats, item?.freeJackpotPool]);
+  }, [fetchFreeJackpotStats, item?.freeJackpotPool, item?.originalFreeJackpotPool, item?.isResolved]);
+
+  const userTicketsPlayed = prediction
+    ? Math.max(1, parseInt(prediction.ticketsStaked, 10) || 1)
+    : (freeJackpotStats?.userTickets ?? 0);
+
+  const userFreeJackpotWin =
+    freeJackpotStats?.userJackpotWinAmount != null
+      ? freeJackpotStats.userJackpotWinAmount
+      : null;
 
   const handleFreeConnectWallet = async () => {
     if (!user) {
@@ -824,8 +833,8 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
 
   const effectiveFreeJackpotPool =
     freeJackpotStats?.freeJackpotPool ??
-    (item.isResolved && item.originalFreeJackpotPool
-      ? item.originalFreeJackpotPool
+    (item.isResolved
+      ? (Number(item.originalFreeJackpotPool) || 0) + (Number(item.freeJackpotPool) || 0)
       : item.freeJackpotPool || 0);
 
   const freePotentialWin = (pred) => {
@@ -1106,20 +1115,51 @@ const FreeMatchView = ({ item, isPoll, prediction, onPredict, onClaim, navigate,
                 </p>
               )}
               {isResolved && hasWon && (
-                <button
-                  type="button"
-                  onClick={() => navigate('/jackpot')}
-                  className="mt-4 inline-flex items-center justify-center px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-sm transition-colors"
-                >
-                  Claim your jackpot wins
-                </button>
+                <>
+                  <p className="text-gray-600 dark:text-gray-400 mb-1">
+                    Total tickets on game:{' '}
+                    <strong className="tabular-nums">{freeJackpotStats?.totalTickets ?? '—'}</strong>
+                  </p>
+                  <p className="text-gray-600 dark:text-gray-400 mb-1">
+                    Your tickets:{' '}
+                    <strong className="tabular-nums">{userTicketsPlayed}</strong>
+                  </p>
+                  {userFreeJackpotWin != null && (
+                    <p className="font-semibold text-emerald-700 dark:text-emerald-300 mb-2">
+                      You win: {formatUsdAmount(userFreeJackpotWin)}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => navigate('/jackpot')}
+                    className="mt-2 inline-flex items-center justify-center px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-sm transition-colors"
+                  >
+                    Claim your jackpot wins
+                  </button>
+                </>
+              )}
+              {isResolved && !hasWon && (
+                <>
+                  <p className="text-gray-600 dark:text-gray-400 mb-1">
+                    Total tickets on game:{' '}
+                    <strong className="tabular-nums">{freeJackpotStats?.totalTickets ?? '—'}</strong>
+                  </p>
+                  <p className="text-gray-600 dark:text-gray-400 mb-1">
+                    Your tickets:{' '}
+                    <strong className="tabular-nums">{userTicketsPlayed}</strong>
+                  </p>
+                </>
               )}
               {!isResolved && (
                 <>
                   <p className="text-gray-600 dark:text-gray-400 mb-1">Status: Pending</p>
                   <p className="text-gray-600 dark:text-gray-400 mb-1">
-                    Tickets played:{' '}
-                    <strong>{Math.max(1, parseInt(prediction.ticketsStaked, 10) || 1)}</strong>
+                    Total tickets on game:{' '}
+                    <strong className="tabular-nums">{freeJackpotStats?.totalTickets ?? '—'}</strong>
+                  </p>
+                  <p className="text-gray-600 dark:text-gray-400 mb-1">
+                    Your tickets:{' '}
+                    <strong className="tabular-nums">{userTicketsPlayed}</strong>
                   </p>
                   {(() => {
                     const potWin = freePotentialWin(prediction);
@@ -1268,8 +1308,8 @@ const BoostMatchView = ({
 
   const effectiveFreeJackpotPool =
     freeJackpotStats?.freeJackpotPool ??
-    (item.isResolved && item.originalFreeJackpotPool
-      ? item.originalFreeJackpotPool
+    (item.isResolved
+      ? (Number(item.originalFreeJackpotPool) || 0) + (Number(item.freeJackpotPool) || 0)
       : item.freeJackpotPool || 0);
 
   const fetchBoostStats = useCallback(async () => {

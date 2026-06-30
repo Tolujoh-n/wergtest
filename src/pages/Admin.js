@@ -207,13 +207,13 @@ const Admin = () => {
     setLoading(true);
     try {
       if (activeTab === 'matches') {
-        const response = await api.get('/matches');
+        const response = await api.get('/admin/matches-list');
         setMatches(response.data || []);
       } else if (activeTab === 'cups') {
         const response = await api.get('/cups');
         setCups(response.data || []);
       } else if (activeTab === 'polls') {
-        const response = await api.get('/polls');
+        const response = await api.get('/admin/polls-list');
         setPolls(response.data || []);
       } else if (activeTab === 'blogs') {
         const response = await api.get('/admin/blogs');
@@ -957,6 +957,10 @@ const MatchesTab = ({ matches, cups, stages, loading, tablePage, setTablePage, i
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Teams</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Date</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Tickets</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Boost pool</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Platform fees</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Market fees</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Status</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Result</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Actions</th>
@@ -972,6 +976,18 @@ const MatchesTab = ({ matches, cups, stages, loading, tablePage, setTablePage, i
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                   {new Date(match.date).toLocaleDateString()}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
+                  {match.totalFreeTickets ?? 0}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-purple-700 dark:text-purple-300">
+                  {formatUsdAmount(match.displayBoostJackpot ?? match.boostPool ?? 0)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
+                  {formatUsdAmount(match.platformFees ?? 0)}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
+                  {formatUsdAmount(match.marketPlatformFees ?? 0)}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`px-2 py-1 rounded-full text-xs ${
@@ -1850,6 +1866,10 @@ const PollsTab = ({ polls, cups, stages, loading, tablePage, setTablePage, items
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Question</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Date (GMT)</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Type</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Tickets</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Boost pool</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Platform fees</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Market fees</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Status</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Result</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Actions</th>
@@ -1869,6 +1889,18 @@ const PollsTab = ({ polls, cups, stages, loading, tablePage, setTablePage, items
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {poll.type}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
+                    {poll.totalFreeTickets ?? 0}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-purple-700 dark:text-purple-300">
+                    {formatUsdAmount(poll.displayBoostJackpot ?? poll.boostPool ?? 0)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
+                    {formatUsdAmount(poll.platformFees ?? 0)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
+                    {formatUsdAmount(poll.marketPlatformFees ?? 0)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`px-2 py-1 rounded-full text-xs ${
