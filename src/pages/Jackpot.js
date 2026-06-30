@@ -204,8 +204,8 @@ const Jackpot = () => {
         // ignore
       }
       
-      // Then update backend
-      await api.post('/jackpots/withdraw', { amount: withdrawAmount });
+      // Then update backend (txHash makes the balance debit idempotent)
+      await api.post('/jackpots/withdraw', { amount: withdrawAmount, txHash });
       showNotification('Withdrawal successful!', 'success');
       setWithdrawAmount('');
       await fetchUserStats();

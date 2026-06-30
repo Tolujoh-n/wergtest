@@ -963,33 +963,33 @@ const MatchesTab = ({ matches, cups, stages, loading, tablePage, setTablePage, i
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Market fees</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Status</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Result</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Actions</th>
             </tr>
           </thead>
-          <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+          <tbody className="bg-white dark:bg-gray-800">
             {(() => {
               const paginatedMatches = matches.slice((tablePage - 1) * itemsPerPage, tablePage * itemsPerPage);
               return paginatedMatches.map((match) => (
-              <tr key={match._id}>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
+              <React.Fragment key={match._id}>
+              <tr className="border-t border-gray-200 dark:border-gray-700">
+                <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
                   {match.teamA} vs {match.teamB}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                   {new Date(match.date).toLocaleDateString()}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
+                <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
                   {match.totalFreeTickets ?? 0}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-purple-700 dark:text-purple-300">
+                <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm tabular-nums text-purple-700 dark:text-purple-300">
                   {formatUsdAmount(match.displayBoostJackpot ?? match.boostPool ?? 0)}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
+                <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
                   {formatUsdAmount(match.platformFees ?? 0)}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
+                <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
                   {formatUsdAmount(match.marketPlatformFees ?? 0)}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
+                <td className="px-6 pt-4 pb-1 whitespace-nowrap">
                   <span className={`px-2 py-1 rounded-full text-xs ${
                     match.status === 'upcoming' ? 'bg-yellow-100 text-yellow-800' :
                     match.status === 'live' ? 'bg-green-100 text-green-800' :
@@ -998,7 +998,7 @@ const MatchesTab = ({ matches, cups, stages, loading, tablePage, setTablePage, i
                     {match.status}
                   </span>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                   {(() => {
                     if (!match.result) return 'Pending';
                     const result = String(match.result).trim();
@@ -1015,48 +1015,50 @@ const MatchesTab = ({ matches, cups, stages, loading, tablePage, setTablePage, i
                     return result;
                   })()}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                  <div className="flex flex-wrap gap-2">
+              </tr>
+              <tr>
+                <td colSpan={8} className="px-6 pb-4 pt-1">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
                     <button
                       onClick={() => setShowStatusModal(match)}
-                      className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs"
+                      className="px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs"
                     >
                       Status
                     </button>
                     <button
                       onClick={() => setShowEditModal(match)}
-                      className="px-3 py-1 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-xs"
+                      className="px-3 py-1.5 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-xs"
                     >
                       Edit
                     </button>
                     <button
                       onClick={() => setPoolModal({ kind: 'match', item: { ...match, label: `${match.teamA} vs ${match.teamB}` }, poolType: 'jackpot' })}
-                      className="px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700 text-xs"
+                      className="px-3 py-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 text-xs"
                     >
                       Jackpot
                     </button>
                     <button
                       onClick={() => setPoolModal({ kind: 'match', item: { ...match, label: `${match.teamA} vs ${match.teamB}` }, poolType: 'boost' })}
-                      className="px-3 py-1 bg-teal-600 text-white rounded hover:bg-teal-700 text-xs"
+                      className="px-3 py-1.5 bg-teal-600 text-white rounded hover:bg-teal-700 text-xs"
                     >
                       Boost pool
                     </button>
                     <button
                       onClick={() => setShowLiquidityModal(match)}
-                      className="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600 text-xs"
+                      className="px-3 py-1.5 bg-purple-500 text-white rounded hover:bg-purple-600 text-xs"
                     >
                       Add Liquidity
                     </button>
                     <button
                       type="button"
                       onClick={() => navigate(`/admin/market/match/${match._id}`)}
-                      className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 text-xs"
+                      className="px-3 py-1.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 text-xs"
                     >
                       Control
                     </button>
                     <button
                       onClick={() => setShowResolveModal(match)}
-                      className={`px-3 py-1 text-white rounded text-xs ${
+                      className={`px-3 py-1.5 text-white rounded text-xs ${
                         match.isResolved
                           ? 'bg-amber-500 hover:bg-amber-600'
                           : 'bg-green-500 hover:bg-green-600'
@@ -1066,13 +1068,14 @@ const MatchesTab = ({ matches, cups, stages, loading, tablePage, setTablePage, i
                     </button>
                     <button
                       onClick={() => setShowDeleteModal(match)}
-                      className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs"
+                      className="px-3 py-1.5 bg-red-500 text-white rounded hover:bg-red-600 text-xs"
                     >
                       Delete
                     </button>
                   </div>
                 </td>
               </tr>
+              </React.Fragment>
             ));
             })()}
           </tbody>
@@ -1872,37 +1875,37 @@ const PollsTab = ({ polls, cups, stages, loading, tablePage, setTablePage, items
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Market fees</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Status</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Result</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Actions</th>
             </tr>
           </thead>
-          <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+          <tbody className="bg-white dark:bg-gray-800">
             {(() => {
               const paginatedPolls = polls.slice((tablePage - 1) * itemsPerPage, tablePage * itemsPerPage);
               return polls.length > 0 ? (
               paginatedPolls.map((poll) => (
-                <tr key={poll._id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
+                <React.Fragment key={poll._id}>
+                <tr className="border-t border-gray-200 dark:border-gray-700">
+                  <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
                     {poll.question}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                  <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {poll.date ? formatEventDateGmt(poll.date) : '—'}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                  <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {poll.type}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
+                  <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
                     {poll.totalFreeTickets ?? 0}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-purple-700 dark:text-purple-300">
+                  <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm tabular-nums text-purple-700 dark:text-purple-300">
                     {formatUsdAmount(poll.displayBoostJackpot ?? poll.boostPool ?? 0)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
+                  <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
                     {formatUsdAmount(poll.platformFees ?? 0)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
+                  <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm tabular-nums text-gray-700 dark:text-gray-300">
                     {formatUsdAmount(poll.marketPlatformFees ?? 0)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-6 pt-4 pb-1 whitespace-nowrap">
                     <span className={`px-2 py-1 rounded-full text-xs ${
                       poll.status === 'active' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
                       poll.status === 'settled' ? 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200' :
@@ -1911,51 +1914,53 @@ const PollsTab = ({ polls, cups, stages, loading, tablePage, setTablePage, items
                       {poll.status}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                  <td className="px-6 pt-4 pb-1 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {poll.result || 'Pending'}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <div className="flex flex-wrap gap-2">
+                </tr>
+                <tr>
+                  <td colSpan={9} className="px-6 pb-4 pt-1">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <button
                         onClick={() => setShowStatusModal(poll)}
-                        className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs"
+                        className="px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs"
                       >
                         Status
                       </button>
                       <button
                         onClick={() => setShowEditModal(poll)}
-                        className="px-3 py-1 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-xs"
+                        className="px-3 py-1.5 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-xs"
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => setPoolModal({ kind: 'poll', item: { ...poll, label: poll.question }, poolType: 'jackpot' })}
-                        className="px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700 text-xs"
+                        className="px-3 py-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 text-xs"
                       >
                         Jackpot
                       </button>
                       <button
                         onClick={() => setPoolModal({ kind: 'poll', item: { ...poll, label: poll.question }, poolType: 'boost' })}
-                        className="px-3 py-1 bg-teal-600 text-white rounded hover:bg-teal-700 text-xs"
+                        className="px-3 py-1.5 bg-teal-600 text-white rounded hover:bg-teal-700 text-xs"
                       >
                         Boost pool
                       </button>
                       <button
                         onClick={() => setShowLiquidityModal(poll)}
-                        className="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600 text-xs"
+                        className="px-3 py-1.5 bg-purple-500 text-white rounded hover:bg-purple-600 text-xs"
                       >
                         Add Liquidity
                       </button>
                       <button
                         type="button"
                         onClick={() => navigate(`/admin/market/poll/${poll._id}`)}
-                        className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 text-xs"
+                        className="px-3 py-1.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 text-xs"
                       >
                         Control
                       </button>
                       <button
                         onClick={() => setShowResolveModal(poll)}
-                        className={`px-3 py-1 text-white rounded text-xs ${
+                        className={`px-3 py-1.5 text-white rounded text-xs ${
                           poll.isResolved
                             ? 'bg-amber-500 hover:bg-amber-600'
                             : 'bg-green-500 hover:bg-green-600'
@@ -1965,17 +1970,18 @@ const PollsTab = ({ polls, cups, stages, loading, tablePage, setTablePage, items
                       </button>
                       <button
                         onClick={() => setShowDeleteModal(poll)}
-                        className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs"
+                        className="px-3 py-1.5 bg-red-500 text-white rounded hover:bg-red-600 text-xs"
                       >
                         Delete
                       </button>
                     </div>
                   </td>
                 </tr>
+                </React.Fragment>
               ))
             ) : (
               <tr>
-                <td colSpan="6" className="px-6 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                <td colSpan="9" className="px-6 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
                   No polls found. Create one to get started!
                 </td>
               </tr>

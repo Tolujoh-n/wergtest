@@ -1547,7 +1547,7 @@ const BoostMatchView = ({
         // ignore
       }
 
-      await api.post(`/predictions/${prediction._id}/claim`);
+      await api.post(`/predictions/${prediction._id}/claim`, { txHash });
       showNotification('Payout claimed successfully!', 'success');
 
       if (onRefreshPrediction) {
@@ -4930,7 +4930,7 @@ const MarketMatchView = ({ item, isPoll, navigate, user, showNotification, locke
                                     // ignore
                                   }
 
-                                  await api.post(`/predictions/${pred._id}/claim`);
+                                  await api.post(`/predictions/${pred._id}/claim`, { txHash });
                                   showNotification('Payout claimed successfully!', 'success');
                                   fetchUserMarketPrediction();
                                 } catch (error) {
