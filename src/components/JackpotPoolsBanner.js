@@ -41,13 +41,14 @@ export default function JackpotPoolsBanner({
 
 export function jackpotPoolsFromItem(item) {
   if (!item) return { freeJackpot: 0, boostJackpot: 0 };
-  const freeJackpot =
-    item.isResolved && item.originalFreeJackpotPool != null
-      ? Number(item.originalFreeJackpotPool) || 0
-      : Number(item.freeJackpotPool) || 0;
-  const boostJackpot =
-    item.isResolved && (item.originalBoostPool ?? 0) > 0
-      ? Number(item.originalBoostPool) || 0
-      : Number(item.boostPool) || 0;
+  // When resolved, the distributed amount lives in originalFreeJackpotPool and any amount the
+  // admin tops up afterwards lives in freeJackpotPool (until the next re-resolve distributes it),
+  // so show the sum. boostPool is never zeroed, so it always reflects the live pool + top-ups.
+  const freeJackpot = item.isResolved
+    ? (Number(item.originalFreeJackpotPool) || 0) + (Number(item.freeJackpotPool) || 0)
+    : Number(item.freeJackpotPool) || 0;
+  const boostJackpot = item.isResolved
+    ? Math.max(Number(item.originalBoostPool) || 0, Number(item.boostPool) || 0)
+    : Number(item.boostPool) || 0;
   return { freeJackpot, boostJackpot };
 }

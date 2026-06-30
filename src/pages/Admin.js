@@ -456,17 +456,14 @@ const Admin = () => {
 
   const handleResolveMatch = async (matchId, result) => {
     try {
-      // Auto-connects wallet and switches network if needed
-      // Get match to get marketId
       const matchResponse = await api.get(`/matches/${matchId}`);
       const match = matchResponse.data;
-      
+
       if (!match.marketId) {
         showNotification('Market not created on blockchain yet', 'error');
         return;
       }
-      
-      // Map result to blockchain format
+
       let winningOption = result;
       if (result === 'TeamA' || result.toLowerCase() === 'teama') {
         winningOption = 'TeamA';
@@ -475,18 +472,22 @@ const Admin = () => {
       } else if (result === 'Draw' || result.toLowerCase() === 'draw') {
         winningOption = 'Draw';
       }
-      
-      // Resolve on blockchain first
+
+      if (match.isResolved) {
+        await api.post(`/admin/matches/${matchId}/resolve`, { result, reResolve: true });
+        fetchData();
+        showNotification('Match result updated in the platform.', 'success');
+        return;
+      }
+
       try {
         const txHash = await resolveMarket(match.marketId, winningOption);
         showNotification(`Match resolved on blockchain! TX: ${txHash.slice(0, 10)}...`, 'success');
-        
-        // Resolve in backend (payouts recorded in DB; users claim via signed txs — no per-user on-chain sync)
         await api.post(`/admin/matches/${matchId}/resolve`, { result });
       } catch (blockchainError) {
         console.error('Blockchain transaction failed:', blockchainError);
         showNotification(blockchainError.message || 'Blockchain transaction failed. Please try again.', 'error');
-        throw blockchainError; // Re-throw to prevent backend call
+        throw blockchainError;
       }
       fetchData();
       showNotification('Match resolved successfully!', 'success');
@@ -556,36 +557,38 @@ const Admin = () => {
 
   const handleResolvePoll = async (pollId, result, optionIndex) => {
     try {
-      // Auto-connects wallet and switches network if needed
-      // Get poll to get marketId
       const pollResponse = await api.get(`/polls/${pollId}`);
       const poll = pollResponse.data;
-      
+
       if (!poll.marketId) {
         showNotification('Market not created on blockchain yet', 'error');
         return;
       }
-      
-      // Determine winning option
+
       let winningOption = result;
       if (poll.optionType === 'options' && optionIndex !== undefined) {
         winningOption = poll.options[optionIndex].text;
       } else if (result) {
         winningOption = result.toUpperCase();
       }
-      
-      // Resolve on blockchain first
+
+      const payload = optionIndex !== undefined ? { optionIndex } : { result };
+
+      if (poll.isResolved) {
+        await api.post(`/admin/polls/${pollId}/resolve`, { ...payload, reResolve: true });
+        fetchData();
+        showNotification('Poll result updated in the platform.', 'success');
+        return;
+      }
+
       try {
         const txHash = await resolveMarket(poll.marketId, winningOption);
         showNotification(`Poll resolved on blockchain! TX: ${txHash.slice(0, 10)}...`, 'success');
-        
-        // Then resolve in backend only after blockchain success
-        const payload = optionIndex !== undefined ? { optionIndex } : { result };
         await api.post(`/admin/polls/${pollId}/resolve`, payload);
       } catch (blockchainError) {
         console.error('Blockchain transaction failed:', blockchainError);
         showNotification(blockchainError.message || 'Blockchain transaction failed. Please try again.', 'error');
-        throw blockchainError; // Re-throw to prevent backend call
+        throw blockchainError;
       }
       fetchData();
       showNotification('Poll resolved successfully!', 'success');
@@ -1035,14 +1038,16 @@ const MatchesTab = ({ matches, cups, stages, loading, tablePage, setTablePage, i
                     >
                       Control
                     </button>
-                    {!match.isResolved && (
-                      <button
-                        onClick={() => setShowResolveModal(match)}
-                        className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-xs"
-                      >
-                        Resolve
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setShowResolveModal(match)}
+                      className={`px-3 py-1 text-white rounded text-xs ${
+                        match.isResolved
+                          ? 'bg-amber-500 hover:bg-amber-600'
+                          : 'bg-green-500 hover:bg-green-600'
+                      }`}
+                    >
+                      {match.isResolved ? 'Change result' : 'Resolve'}
+                    </button>
                     <button
                       onClick={() => setShowDeleteModal(match)}
                       className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs"
@@ -1596,9 +1601,34 @@ const CreateMatchModal = ({ cups, stages, onClose, onSubmit }) => {
 };
 
 const ResolveModal = ({ item, type, onClose, onSubmit }) => {
-  const [result, setResult] = useState('');
-  const [optionIndex, setOptionIndex] = useState('');
+  const initialMatchResult = () => {
+    if (type !== 'match' || !item?.result) return '';
+    const r = String(item.result).toLowerCase();
+    if (r === 'teama') return item.teamA;
+    if (r === 'teamb') return item.teamB;
+    if (r === 'draw') return 'Draw';
+    return item.result;
+  };
+
+  const initialPollOptionIndex = () => {
+    if (type !== 'poll' || item?.optionType !== 'options' || !item?.result || !item?.options?.length) {
+      return '';
+    }
+    const idx = item.options.findIndex(
+      (opt) => String(opt.text || '').trim() === String(item.result || '').trim()
+    );
+    return idx >= 0 ? String(idx) : '';
+  };
+
+  const initialPollYesNo = () => {
+    if (type !== 'poll' || item?.optionType === 'options' || !item?.result) return '';
+    return String(item.result).toUpperCase();
+  };
+
+  const [result, setResult] = useState(() => initialMatchResult() || initialPollYesNo());
+  const [optionIndex, setOptionIndex] = useState(() => initialPollOptionIndex());
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isReResolve = !!item?.isResolved;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1644,8 +1674,19 @@ const ResolveModal = ({ item, type, onClose, onSubmit }) => {
       : ['YES', 'NO'];
 
   return (
-    <Modal isOpen={true} onClose={onClose} title={`Resolve ${type === 'match' ? 'Match' : 'Poll'}`}>
+    <Modal
+      isOpen={true}
+      onClose={onClose}
+      title={isReResolve ? `Change ${type === 'match' ? 'Match' : 'Poll'} Result` : `Resolve ${type === 'match' ? 'Match' : 'Poll'}`}
+    >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {isReResolve && (
+          <p className="text-sm text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+            This {type === 'match' ? 'match' : 'poll'} is already resolved
+            {item.result ? ` as “${item.result}”` : ''}. Pick a new outcome to update payouts in the platform database.
+            On-chain resolution cannot be changed.
+          </p>
+        )}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             Result
@@ -1703,7 +1744,7 @@ const ResolveModal = ({ item, type, onClose, onSubmit }) => {
             disabled={isSubmitting}
             className="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isSubmitting ? 'Resolving...' : 'Resolve'}
+            {isSubmitting ? 'Saving...' : isReResolve ? 'Update result' : 'Resolve'}
           </button>
           <button
             type="button"
@@ -1880,14 +1921,16 @@ const PollsTab = ({ polls, cups, stages, loading, tablePage, setTablePage, items
                       >
                         Control
                       </button>
-                      {!poll.isResolved && (
-                        <button
-                          onClick={() => setShowResolveModal(poll)}
-                          className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-xs"
-                        >
-                          Resolve
-                        </button>
-                      )}
+                      <button
+                        onClick={() => setShowResolveModal(poll)}
+                        className={`px-3 py-1 text-white rounded text-xs ${
+                          poll.isResolved
+                            ? 'bg-amber-500 hover:bg-amber-600'
+                            : 'bg-green-500 hover:bg-green-600'
+                        }`}
+                      >
+                        {poll.isResolved ? 'Change result' : 'Resolve'}
+                      </button>
                       <button
                         onClick={() => setShowDeleteModal(poll)}
                         className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs"

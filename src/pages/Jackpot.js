@@ -333,7 +333,7 @@ const Jackpot = () => {
             >
               <div className="flex items-center justify-between mb-4">
                 <span className="px-3 py-1 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200">
-                  JACKPOT
+                  Free Jackpot
                 </span>
                 <span className={`px-2 py-1 rounded text-xs font-semibold ${
                   jackpot.status === 'resolved'
