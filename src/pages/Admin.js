@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../utils/api';
+import api, { postAdminResolveWithRetry } from '../utils/api';
 import { useNotification } from '../components/Notification';
 import {
   createMarket,
@@ -42,6 +42,11 @@ function complementaryStartingPrice(value) {
 const INITIAL_LIQUIDITY_MIN = 0.01;
 const INITIAL_LIQUIDITY_MAX = 10;
 const INITIAL_LIQUIDITY_DEFAULT = '0.01';
+
+function isAlreadyResolvedOnChain(err) {
+  const msg = String(err?.reason || err?.shortMessage || err?.message || '').toLowerCase();
+  return msg.includes('already resolved');
+}
 
 /** Clamp above max while typing; allow transient empty/partial entry. */
 function sanitizeInitialLiquidityInput(raw) {
@@ -474,7 +479,7 @@ const Admin = () => {
       }
 
       if (match.isResolved) {
-        await api.post(`/admin/matches/${matchId}/resolve`, { result, reResolve: true });
+        await postAdminResolveWithRetry(`/admin/matches/${matchId}/resolve`, { result, reResolve: true });
         fetchData();
         showNotification('Match result updated in the platform.', 'success');
         return;
@@ -483,17 +488,22 @@ const Admin = () => {
       try {
         const txHash = await resolveMarket(match.marketId, winningOption);
         showNotification(`Match resolved on blockchain! TX: ${txHash.slice(0, 10)}...`, 'success');
-        await api.post(`/admin/matches/${matchId}/resolve`, { result });
       } catch (blockchainError) {
-        console.error('Blockchain transaction failed:', blockchainError);
-        showNotification(blockchainError.message || 'Blockchain transaction failed. Please try again.', 'error');
-        throw blockchainError;
+        if (!isAlreadyResolvedOnChain(blockchainError)) {
+          console.error('Blockchain transaction failed:', blockchainError);
+          showNotification(blockchainError.message || 'Blockchain transaction failed. Please try again.', 'error');
+          throw blockchainError;
+        }
+        showNotification('Market already resolved on-chain; syncing platform...', 'info');
       }
+
+      await postAdminResolveWithRetry(`/admin/matches/${matchId}/resolve`, { result });
       fetchData();
       showNotification('Match resolved successfully!', 'success');
     } catch (error) {
       console.error('Error resolving match:', error);
-      showNotification(error.message || 'Failed to resolve match', 'error');
+      showNotification(error.response?.data?.message || error.message || 'Failed to resolve match', 'error');
+      throw error;
     }
   };
 
@@ -575,7 +585,7 @@ const Admin = () => {
       const payload = optionIndex !== undefined ? { optionIndex } : { result };
 
       if (poll.isResolved) {
-        await api.post(`/admin/polls/${pollId}/resolve`, { ...payload, reResolve: true });
+        await postAdminResolveWithRetry(`/admin/polls/${pollId}/resolve`, { ...payload, reResolve: true });
         fetchData();
         showNotification('Poll result updated in the platform.', 'success');
         return;
@@ -584,17 +594,22 @@ const Admin = () => {
       try {
         const txHash = await resolveMarket(poll.marketId, winningOption);
         showNotification(`Poll resolved on blockchain! TX: ${txHash.slice(0, 10)}...`, 'success');
-        await api.post(`/admin/polls/${pollId}/resolve`, payload);
       } catch (blockchainError) {
-        console.error('Blockchain transaction failed:', blockchainError);
-        showNotification(blockchainError.message || 'Blockchain transaction failed. Please try again.', 'error');
-        throw blockchainError;
+        if (!isAlreadyResolvedOnChain(blockchainError)) {
+          console.error('Blockchain transaction failed:', blockchainError);
+          showNotification(blockchainError.message || 'Blockchain transaction failed. Please try again.', 'error');
+          throw blockchainError;
+        }
+        showNotification('Market already resolved on-chain; syncing platform...', 'info');
       }
+
+      await postAdminResolveWithRetry(`/admin/polls/${pollId}/resolve`, payload);
       fetchData();
       showNotification('Poll resolved successfully!', 'success');
     } catch (error) {
       console.error('Error resolving poll:', error);
-      showNotification(error.message || 'Failed to resolve poll', 'error');
+      showNotification(error.response?.data?.message || error.message || 'Failed to resolve poll', 'error');
+      throw error;
     }
   };
 

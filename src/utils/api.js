@@ -35,3 +35,30 @@ api.interceptors.request.use(
 );
 
 export default api;
+
+const RESOLVE_REQUEST_TIMEOUT_MS = 180000;
+const RESOLVE_MAX_ATTEMPTS = 4;
+
+function isRetryableResolveError(err) {
+  if (!err) return false;
+  if (!err.response) return true;
+  const status = err.response.status;
+  return status === 502 || status === 503 || status === 504 || status === 408;
+}
+
+/** Admin resolve can be slow; retry on proxy/network blips after on-chain resolve succeeds. */
+export async function postAdminResolveWithRetry(path, body) {
+  let lastError;
+  for (let attempt = 0; attempt < RESOLVE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await api.post(path, body, { timeout: RESOLVE_REQUEST_TIMEOUT_MS });
+    } catch (err) {
+      lastError = err;
+      if (!isRetryableResolveError(err) || attempt === RESOLVE_MAX_ATTEMPTS - 1) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
